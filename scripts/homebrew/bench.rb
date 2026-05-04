@@ -16,7 +16,7 @@ class Bench < Formula
   desc "BenchAGI CLI — agent operations on top of OpenClaw"
   homepage "https://github.com/BenchAGI/bench-cli"
   url "https://github.com/BenchAGI/bench-cli/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
+  sha256 "523431d59d73795a8bf83b46025a86886fd0e5643839fc60670eb419d32b621c"
   license "MIT"
   version "0.2.0"
 
