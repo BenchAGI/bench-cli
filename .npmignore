@@ -1,0 +1,6 @@
+test/
+scripts/homebrew/
+.gitignore
+.npmrc
+*.tgz
+node_modules/

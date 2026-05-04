@@ -1,0 +1,38 @@
+{
+  "name": "@benchagi/cli",
+  "version": "0.2.0",
+  "description": "BenchAGI CLI — practical day-to-day access to the OpenClaw agent system (ask, chat, feed, sessions, tasks, tail, commitments).",
+  "type": "module",
+  "bin": {
+    "bench": "./bin/bench.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/install.sh",
+    "completions/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "lint": "node --check bin/bench.mjs && find src test -name '*.mjs' -exec node --check {} +",
+    "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: bench setup')\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["bench", "benchagi", "openclaw", "agents", "cli", "ai"],
+  "homepage": "https://github.com/BenchAGI/bench-cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BenchAGI/bench-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BenchAGI/bench-cli/issues"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
