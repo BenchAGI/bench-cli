@@ -45,3 +45,55 @@ test("formatStatus marks unhealthy when tick stale", () => {
   });
   assert.match(out, /connection unhealthy/);
 });
+
+// V1.1 — Item 2: SPEC §13 "Liveness: (reconnecting attempt N) label correct"
+test("formatStatus shows truthful reconnect label when reconnectAttempt is set", () => {
+  const out = formatStatus({
+    agentId: "ember",
+    pid: 1,
+    runQuietMs: 5_000,
+    gatewayTickMs: 1_000,
+    stuck: false,
+    unhealthyTick: false,
+    spinnerFrame: "⠋",
+    reconnectAttempt: 3,
+    reconnectDelayMs: 5_000,
+  });
+  assert.match(out, /reconnecting attempt 3 in 5s/);
+  // The unhealthy/stuck heuristics did NOT fire — only the truthful label.
+  assert.doesNotMatch(out, /connection unhealthy/);
+  assert.doesNotMatch(out, /may be stuck/);
+});
+
+test("formatStatus reconnect label takes precedence over unhealthyTick", () => {
+  const out = formatStatus({
+    agentId: "ember",
+    pid: 1,
+    runQuietMs: 5_000,
+    gatewayTickMs: 200_000,
+    stuck: false,
+    unhealthyTick: true,
+    spinnerFrame: "⠋",
+    reconnectAttempt: 2,
+    reconnectDelayMs: 2_000,
+  });
+  // Reconnect is the load-bearing truth; the heuristic-based label is suppressed.
+  assert.match(out, /reconnecting attempt 2 in 2s/);
+  assert.doesNotMatch(out, /connection unhealthy/);
+});
+
+test("formatStatus reconnect label without delayMs renders without 'in Ns'", () => {
+  const out = formatStatus({
+    agentId: "ember",
+    pid: 1,
+    runQuietMs: 0,
+    gatewayTickMs: 0,
+    stuck: false,
+    unhealthyTick: false,
+    spinnerFrame: "⠋",
+    reconnectAttempt: 1,
+    // delay omitted
+  });
+  assert.match(out, /reconnecting attempt 1\)/);
+  assert.doesNotMatch(out, /reconnecting attempt 1 in/);
+});

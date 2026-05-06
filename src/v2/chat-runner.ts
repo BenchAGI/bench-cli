@@ -176,7 +176,7 @@ export class ChatRunner {
       this.liveness,
     );
 
-    // Wire reconnect lifecycle (V1.1 — Item 1).
+    // Wire reconnect lifecycle (V1.1 — Item 1 + Item 2).
     this.transport.setReconnectListeners({
       onDisconnected: () => {
         eprintln(c.dim("(connection lost — reconnecting…)"));
@@ -187,9 +187,13 @@ export class ChatRunner {
             `(reconnect attempt ${attempt} in ${Math.round(delayMs / 1000)}s)`,
           ),
         );
+        // V1.1 — Item 2: feed the truthful reconnect state to the
+        // liveness indicator so its label reflects transport reality.
+        this.liveness.setReconnecting(attempt, delayMs);
       },
       onReconnected: () => {
         eprintln(c.dim("(reconnected)"));
+        this.liveness.clearReconnecting();
         void this.replayHistoryAfterReconnect();
       },
     });
@@ -328,6 +332,8 @@ export class ChatRunner {
   }
 
   private completeRun(reason: "final" | "aborted" | "error"): void {
+    // V1.1 — Item 2: hide the liveness indicator between REPL turns.
+    if (this.liveness) this.liveness.setInFlight(false);
     if (this.finalWaiter) {
       const w = this.finalWaiter;
       this.finalWaiter = null;
