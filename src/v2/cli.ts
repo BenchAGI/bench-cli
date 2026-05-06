@@ -15,6 +15,7 @@ type Argv = {
   liveness?: Liveness;
   full: boolean;
   noThinking: boolean;
+  traceFramesPath?: string;
   positional: string[];
   command?: string;
 };
@@ -56,6 +57,7 @@ export async function run(argv: string[]): Promise<void> {
         liveness: parsed.liveness ?? "auto",
         showFullToolOutput: parsed.full,
         showThinking: !parsed.noThinking,
+        traceFramesPath: parsed.traceFramesPath,
       });
       try {
         await runner.connect();
@@ -223,6 +225,14 @@ function parseArgs(argv: string[]): Argv {
       out.noThinking = true;
       continue;
     }
+    if (arg === "--trace-frames") {
+      out.traceFramesPath = argv[++i];
+      continue;
+    }
+    if (arg.startsWith("--trace-frames=")) {
+      out.traceFramesPath = arg.slice("--trace-frames=".length);
+      continue;
+    }
     if (arg === "--liveness") {
       out.liveness = (argv[++i] as Liveness) ?? "auto";
       continue;
@@ -272,6 +282,7 @@ Flags:
   --liveness <auto|stream|batch|always|off>   liveness indicator override
   --full                   expand all tool output by default
   --no-thinking            hide thinking deltas
+  --trace-frames <path>    append raw gateway WS frames as JSONL
   --help, --version
 `);
 }

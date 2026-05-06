@@ -51,6 +51,7 @@ export class LocalGatewayWsTransport implements Transport {
   private userClosed = false;
   private hello: HelloOk | null = null;
   private debugLog: ((line: string) => void) | null = null;
+  private rawFrameLog: ((direction: "in" | "out", raw: string) => void) | null = null;
   private connectNonce: string | null = null;
 
   // Reconnect state (V1.1 — Item 1).
@@ -59,9 +60,14 @@ export class LocalGatewayWsTransport implements Transport {
   private reconnectAttempt = 0;
   private reconnectListeners: ReconnectListeners = {};
 
-  constructor(opts: { url?: string; debugLog?: (line: string) => void } = {}) {
+  constructor(opts: {
+    url?: string;
+    debugLog?: (line: string) => void;
+    rawFrameLog?: (direction: "in" | "out", raw: string) => void;
+  } = {}) {
     this.url = opts.url ?? "ws://127.0.0.1:18789";
     this.debugLog = opts.debugLog ?? null;
+    this.rawFrameLog = opts.rawFrameLog ?? null;
   }
 
   async isReachable(): Promise<boolean> {
@@ -128,6 +134,7 @@ export class LocalGatewayWsTransport implements Transport {
       // Temporary handler — replaced by installSteadyStateHandlers on success.
       const initialMessage = (raw: WebSocket.RawData) => {
         const data = typeof raw === "string" ? raw : raw.toString();
+        this.rawFrameLog?.("in", data);
         let msg: unknown;
         try {
           msg = JSON.parse(data);
@@ -239,7 +246,9 @@ export class LocalGatewayWsTransport implements Transport {
             }
           };
           ws.on("message", onMsg);
-          ws.send(JSON.stringify(req));
+          const rawReq = JSON.stringify(req);
+          this.rawFrameLog?.("out", rawReq);
+          ws.send(rawReq);
         });
       };
     });
@@ -279,6 +288,7 @@ export class LocalGatewayWsTransport implements Transport {
 
     ws.on("message", (raw) => {
       const data = typeof raw === "string" ? raw : raw.toString();
+      this.rawFrameLog?.("in", data);
       let msg: unknown;
       try {
         msg = JSON.parse(data);
@@ -418,7 +428,9 @@ export class LocalGatewayWsTransport implements Transport {
         reject(new Error(`request timeout: ${method}`));
       }, REQUEST_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
-      this.ws!.send(JSON.stringify(frame));
+      const raw = JSON.stringify(frame);
+      this.rawFrameLog?.("out", raw);
+      this.ws!.send(raw);
     });
   }
 
