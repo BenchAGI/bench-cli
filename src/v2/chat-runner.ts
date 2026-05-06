@@ -9,7 +9,7 @@ import { StreamRenderer, DEFAULT_RENDERER_OPTIONS } from "./render/stream.js";
 import { LivenessIndicator } from "./render/liveness.js";
 import { ApprovalState, type ApprovalAction } from "./render/approval.js";
 import { classifyByModel, resolveLivenessThreshold, type Liveness } from "./probe/capability.js";
-import type { AgentEventPayload } from "./protocol/types.js";
+import type { AgentEventPayload, EventFrame } from "./protocol/types.js";
 import { PROTOCOL_VERSION } from "./protocol/types.js";
 import { c, eprintln, println } from "./render/ansi.js";
 
@@ -36,6 +36,18 @@ export class ChatRunner {
   private livenessThresholdMs = 5_000;
   private finalWaiter: ((reason: "final" | "aborted" | "error") => void) | null = null;
   private renderedRunStart = new Set<string>();
+  // Highest transport-frame seq observed per session, for chat.history
+  // replay on reconnect (V1.1 — Item 1).
+  private lastSeenFrameSeq = new Map<string, number>();
+  // Set while a chat.history replay is dispatching events through the
+  // router, so the gap-warning suppression knows replayed events came
+  // from history (a gap was already announced).
+  private replayingHistory = false;
+  // While `replayingHistory` is true, live event frames are buffered
+  // here. After the history replay drains, the buffer drains in arrival
+  // order. This prevents the live-vs-history ordering race that would
+  // otherwise produce false seq-gap warnings (Codex Anvil P1).
+  private liveFrameBuffer: EventFrame[] = [];
 
   constructor(private opts: RunnerOptions) {
     this.transport = new LocalGatewayWsTransport({ url: opts.gatewayUrl });
@@ -143,23 +155,153 @@ export class ChatRunner {
         onSessionsChanged: () => { /* future: refresh session cache */ },
         onShutdown: (reason, restartExpectedMs) => {
           this.renderer.renderShutdown(reason, restartExpectedMs);
+          // TODO(V1.1 follow-up — Codex Anvil P2): plumb
+          // restartExpectedMs into transport.reconnectLoop's first-
+          // attempt floor so the reconnect UX respects the shutdown
+          // hint (today we always start at 1s regardless).
         },
         onApprovalResolved: (kind, payload) => {
           void kind;
           this.approval.onTopLevelResolved(payload);
         },
         onUnknown: (event) => this.renderer.renderUnknownEvent(event),
+        onSeqGap: (runId, prevSeq, nextSeq) => {
+          // Suppress gap warning during a chat.history replay — the
+          // replay is itself the recovery for the gap, and emitting
+          // the warning while we are filling it would be misleading.
+          if (this.replayingHistory) return;
+          eprintln(c.dim(`(events may be incomplete: run ${runId.slice(0, 8)} seq ${prevSeq} → ${nextSeq})`));
+        },
       },
       this.liveness,
     );
+
+    // Wire reconnect lifecycle (V1.1 — Item 1).
+    this.transport.setReconnectListeners({
+      onDisconnected: () => {
+        eprintln(c.dim("(connection lost — reconnecting…)"));
+      },
+      onReconnecting: (attempt, delayMs) => {
+        eprintln(
+          c.dim(
+            `(reconnect attempt ${attempt} in ${Math.round(delayMs / 1000)}s)`,
+          ),
+        );
+      },
+      onReconnected: () => {
+        eprintln(c.dim("(reconnected)"));
+        void this.replayHistoryAfterReconnect();
+      },
+    });
 
     // Pump events.
     void this.eventLoop();
   }
 
+  /**
+   * After a successful reconnect, ask the gateway for any session
+   * events we missed. The router dedupes against already-rendered
+   * events via its existing `(runId, seq, stream, sub)` key set.
+   * V1.1 — Item 1 (SPEC §13 "Reconnect: in-flight run recovery").
+   *
+   * Live frames arriving while this method is in flight are buffered
+   * by `eventLoop` so they cannot be dispatched ahead of the replay,
+   * which would otherwise produce false seq-gap warnings and
+   * out-of-order rendering (Codex Anvil P1).
+   */
+  private async replayHistoryAfterReconnect(): Promise<void> {
+    if (!this.sessionKey) return;
+    // Set the replay flag BEFORE the chat.history request so any live
+    // frames the gateway emits during the request are buffered.
+    this.replayingHistory = true;
+    try {
+      const sinceSeq = this.lastSeenFrameSeq.get(this.sessionKey) ?? -1;
+      let resp: unknown;
+      try {
+        resp = await this.transport.request("chat.history", {
+          sessionKey: this.sessionKey,
+          sinceSeq,
+        });
+      } catch (err) {
+        // TODO(V1.1 follow-up — Codex Anvil P2): retry chat.history
+        // with bounded backoff before giving up. Today we proceed with
+        // whatever live frames are buffered, which may leave a gap in
+        // the rendered output for the missed window.
+        eprintln(
+          c.red(
+            `history replay failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+        return;
+      }
+      const events = extractHistoryEvents(resp);
+      for (const frame of events) {
+        try {
+          this.recordFrameSeq(frame);
+          this.router.dispatch(frame);
+        } catch (err) {
+          eprintln(
+            c.red(
+              `history replay render error: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
+      }
+      // Drain the live-frame buffer that accumulated during replay.
+      // Loop because new frames may have arrived during the drain.
+      while (this.liveFrameBuffer.length > 0) {
+        const buffered = this.liveFrameBuffer.splice(0);
+        for (const frame of buffered) {
+          try {
+            this.router.dispatch(frame);
+          } catch (err) {
+            eprintln(
+              c.red(
+                `live frame drain render error: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+          }
+        }
+      }
+    } finally {
+      this.replayingHistory = false;
+    }
+  }
+
+  private recordFrameSeq(frame: EventFrame): void {
+    if (typeof frame.seq !== "number" || !this.sessionKey) return;
+    const prev = this.lastSeenFrameSeq.get(this.sessionKey) ?? -1;
+    if (frame.seq > prev) this.lastSeenFrameSeq.set(this.sessionKey, frame.seq);
+  }
+
   private async eventLoop(): Promise<void> {
     try {
       for await (const frame of this.transport.events()) {
+        // Record the highest transport-frame seq we've seen so a
+        // post-reconnect chat.history call can resume from there
+        // (V1.1 — Item 1).
+        this.recordFrameSeq(frame);
+
+        // History-replay window: buffer live frames so they cannot be
+        // dispatched ahead of the chat.history replay (Codex Anvil P1).
+        if (this.replayingHistory) {
+          this.liveFrameBuffer.push(frame);
+          continue;
+        }
+
+        // Drain any buffer stragglers that arrived just as the replay
+        // window closed but before this iteration ran.
+        if (this.liveFrameBuffer.length > 0) {
+          const buffered = this.liveFrameBuffer.splice(0);
+          for (const f of buffered) {
+            try {
+              this.router.dispatch(f);
+            } catch (err) {
+              eprintln(c.red(`render error (buffered): ${err instanceof Error ? err.message : String(err)}`));
+            }
+          }
+        }
+
         try {
           this.router.dispatch(frame);
         } catch (err) {
@@ -215,6 +357,13 @@ export class ChatRunner {
         deliver: true,
       });
     } catch (err) {
+      // TODO(V1.1 follow-up — Codex Anvil P1): chat.send acceptance race.
+      // If the gateway ACK was lost mid-flight but the run was actually
+      // accepted, the user sees "chat.send failed" while history later
+      // recovers the run's output. Re-issue chat.send with the same
+      // idempotencyKey on reconnect (gateway already dedupes), or call
+      // chat.history/sessions.list to confirm acceptance before failing
+      // the user-visible send.
       eprintln(c.red(`chat.send failed: ${err instanceof Error ? err.message : String(err)}`));
     }
   }
@@ -277,4 +426,26 @@ export class ChatRunner {
 
 export function passLine(line: string): void {
   println(line);
+}
+
+/**
+ * Best-effort extractor for the events array returned by chat.history.
+ * Different gateway versions may shape the response slightly differently;
+ * accept a few common shapes. Returns [] if nothing usable.
+ */
+function extractHistoryEvents(resp: unknown): EventFrame[] {
+  if (!resp || typeof resp !== "object") return [];
+  const r = resp as { events?: unknown; frames?: unknown };
+  const list = Array.isArray(r.events)
+    ? r.events
+    : Array.isArray(r.frames)
+      ? r.frames
+      : null;
+  if (!list) return [];
+  return list.filter((e): e is EventFrame => {
+    return Boolean(
+      e && typeof e === "object" && (e as { type?: string }).type === "event"
+        && typeof (e as { event?: string }).event === "string",
+    );
+  });
 }

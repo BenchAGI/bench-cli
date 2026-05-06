@@ -20,11 +20,18 @@ import {
   signDevicePayload,
   type DeviceIdentity,
 } from "../auth/device-identity.js";
+import { nextBackoffMs } from "./backoff.js";
 
 const CLI_VERSION = "1.0.0-beta.1";
 const CONNECT_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const REACHABILITY_TIMEOUT_MS = 500;
+
+export type ReconnectListeners = {
+  onDisconnected?: () => void;
+  onReconnecting?: (attempt: number, delayMs: number) => void;
+  onReconnected?: () => void;
+};
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -41,9 +48,16 @@ export class LocalGatewayWsTransport implements Transport {
   private eventQueue: EventFrame[] = [];
   private eventResolvers: Array<(value: IteratorResult<EventFrame>) => void> = [];
   private closed = false;
+  private userClosed = false;
   private hello: HelloOk | null = null;
   private debugLog: ((line: string) => void) | null = null;
   private connectNonce: string | null = null;
+
+  // Reconnect state (V1.1 — Item 1).
+  private lastConnectOpts: ConnectOptions | null = null;
+  private reconnecting = false;
+  private reconnectAttempt = 0;
+  private reconnectListeners: ReconnectListeners = {};
 
   constructor(opts: { url?: string; debugLog?: (line: string) => void } = {}) {
     this.url = opts.url ?? "ws://127.0.0.1:18789";
@@ -71,6 +85,9 @@ export class LocalGatewayWsTransport implements Transport {
 
   async connect(opts: ConnectOptions): Promise<HelloPolicy> {
     if (this.ws) throw new Error("already connected");
+
+    // Snapshot the connect options for reconnect (V1.1 — Item 1).
+    this.lastConnectOpts = opts;
 
     const url = opts.url || this.url;
     this.url = url;
@@ -307,21 +324,88 @@ export class LocalGatewayWsTransport implements Transport {
     });
 
     ws.on("close", () => {
+      // Stale-close guard: a prior socket's close event MUST NOT poison
+      // the active socket if a reconnect already swapped `this.ws` out.
+      // Codex Anvil P1.
+      if (this.ws !== ws) return;
+
+      // Pending requests can never be auto-replayed; reject them so the
+      // caller can decide. Event resolvers stay pending across a network
+      // reconnect — only drain them on user-initiated close.
       for (const p of this.pending.values()) {
         clearTimeout(p.timer);
         p.reject(new Error("connection closed"));
       }
       this.pending.clear();
-      for (const r of this.eventResolvers) {
-        r({ value: undefined as unknown as EventFrame, done: true });
+
+      this.ws = null;
+
+      if (this.userClosed) {
+        for (const r of this.eventResolvers) {
+          r({ value: undefined as unknown as EventFrame, done: true });
+        }
+        this.eventResolvers.length = 0;
+        this.closed = true;
+        return;
       }
-      this.eventResolvers.length = 0;
-      this.closed = true;
+
+      // Network close — keep events() iterator alive, kick off reconnect.
+      this.reconnectListeners.onDisconnected?.();
+      void this.reconnectLoop();
     });
 
     ws.on("error", (err) => {
       this.debug(`ws error: ${err instanceof Error ? err.message : String(err)}`);
     });
+  }
+
+  /**
+   * Register reconnect lifecycle listeners. Replaces any prior registration.
+   * V1.1 — Item 1.
+   */
+  setReconnectListeners(listeners: ReconnectListeners): void {
+    this.reconnectListeners = listeners ?? {};
+  }
+
+  /**
+   * Reconnect loop (V1.1 — Item 1). Backoff sequence per `nextBackoffMs`.
+   * Keeps trying until either reconnected or the user calls close().
+   * Exposed only via callbacks; the events() iterator does NOT yield
+   * reconnect events directly.
+   */
+  private async reconnectLoop(): Promise<void> {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
+    this.reconnectAttempt = 0;
+    try {
+      while (!this.userClosed) {
+        this.reconnectAttempt += 1;
+        const delay = nextBackoffMs(this.reconnectAttempt);
+        this.reconnectListeners.onReconnecting?.(this.reconnectAttempt, delay);
+        await new Promise<void>((r) => setTimeout(r, delay));
+        if (this.userClosed) return;
+        if (!this.lastConnectOpts) {
+          this.debug("reconnect aborted: no connect opts cached");
+          return;
+        }
+        try {
+          // Reset transport state so connect() can run cleanly.
+          this.ws = null;
+          this.closed = false;
+          this.connectNonce = null;
+          this.hello = null;
+          await this.connect(this.lastConnectOpts);
+          this.reconnectAttempt = 0;
+          this.reconnectListeners.onReconnected?.();
+          return;
+        } catch (err) {
+          this.debug(`reconnect attempt ${this.reconnectAttempt} failed: ${err instanceof Error ? err.message : String(err)}`);
+          // Loop again with next backoff.
+        }
+      }
+    } finally {
+      this.reconnecting = false;
+    }
   }
 
   async request(method: string, params?: unknown): Promise<unknown> {
@@ -339,7 +423,9 @@ export class LocalGatewayWsTransport implements Transport {
   }
 
   async *events(): AsyncIterable<EventFrame> {
-    while (!this.closed) {
+    // Iterator stays alive across network reconnects; only exits when
+    // the user calls close() (V1.1 — Item 1).
+    while (!this.userClosed) {
       if (this.eventQueue.length > 0) {
         const e = this.eventQueue.shift();
         if (e) yield e;
@@ -362,8 +448,14 @@ export class LocalGatewayWsTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    if (!this.ws) return;
+    this.userClosed = true;
     this.closed = true;
+    // Drain any pending event waiters so a parked events() loop exits.
+    for (const r of this.eventResolvers) {
+      r({ value: undefined as unknown as EventFrame, done: true });
+    }
+    this.eventResolvers.length = 0;
+    if (!this.ws) return;
     try {
       this.ws.close();
     } catch {
