@@ -171,10 +171,22 @@ export class StreamRenderer {
       stderr?: string;
       exitCode?: number;
       status?: string;
+      isError?: boolean;
     } | undefined;
     if (!data) return;
     const phase = data.phase ?? "update";
     const name = data.name ?? data.title ?? "tool";
+
+    // V1.1 — Item 4 (Codex Anvil P1): some openclaw versions emit
+    // failed tool events as `phase: "result", isError: true` rather
+    // than `phase: "failed"`. Detect both shapes here so the error
+    // detail block fires on real-world events.
+    const isFailureEvent =
+      phase === "failed" ||
+      phase === "error" ||
+      data.status === "failed" ||
+      ((phase === "result" || phase === "end" || phase === "complete" || phase === "completed")
+        && data.isError === true);
 
     if (phase === "start" || phase === "started") {
       const argsSummary = summarizeArgs(data.args);
@@ -194,18 +206,7 @@ export class StreamRenderer {
       return;
     }
 
-    if (phase === "end" || phase === "complete" || phase === "completed") {
-      const result = data.result ?? "";
-      if (result.length > 0) {
-        const summary = this.summarizeResult(result);
-        println(c.cyan(`│ ${c.dim("result:")} ${summary}`));
-      }
-      const dur = data.durationMs != null ? ` ${(data.durationMs / 1000).toFixed(1)}s` : "";
-      println(c.cyan(`└─ ${c.dim(`done${dur} · press [r] to expand`)}`));
-      return;
-    }
-
-    if (phase === "failed" || phase === "error") {
+    if (isFailureEvent) {
       // V1.1 — Item 4: surface failure detail so the user can act.
       // Order: exit code · error message · stderr · duration. Each is
       // optional; the header always renders.
@@ -219,7 +220,11 @@ export class StreamRenderer {
       const headerSuffix = parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
       println(c.red(`└─ ${name} failed${headerSuffix}${dur}`));
 
-      const errMsg = data.error ?? data.errorMessage;
+      // Error text source-selection: prefer explicit `error`/
+      // `errorMessage`. If neither is set but this is the
+      // `result + isError` shape, use `result` as the error body.
+      const errMsg = data.error ?? data.errorMessage
+        ?? (data.isError === true ? data.result : undefined);
       if (typeof errMsg === "string" && errMsg.length > 0) {
         const lines = errMsg.split("\n").slice(0, 4);
         for (const line of lines) {
@@ -235,6 +240,18 @@ export class StreamRenderer {
         const summary = this.summarizeResult(stderr);
         println(c.red(`   ${c.dim("stderr:")} ${summary}`));
       }
+      return;
+    }
+
+    if (phase === "end" || phase === "complete" || phase === "completed" || phase === "result") {
+      const result = data.result ?? "";
+      if (result.length > 0) {
+        const summary = this.summarizeResult(result);
+        println(c.cyan(`│ ${c.dim("result:")} ${summary}`));
+      }
+      const dur = data.durationMs != null ? ` ${(data.durationMs / 1000).toFixed(1)}s` : "";
+      println(c.cyan(`└─ ${c.dim(`done${dur} · press [r] to expand`)}`));
+      return;
     }
   }
 

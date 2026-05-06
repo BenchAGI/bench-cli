@@ -123,6 +123,46 @@ test("Renderer: tool failure with no detail fields renders only the header", () 
   assert.equal(errorLines.length, 0);
 });
 
+// V1.1 — Item 4 (Codex Anvil P1): real-world openclaw shape
+test("Renderer: tool failure detected via phase:'result' + isError:true (real openclaw shape)", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: {
+        phase: "result",
+        name: "Read",
+        isError: true,
+        result: "ENOENT: no such file or directory",
+      },
+    });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("\n");
+  // Failure header fires.
+  assert.match(all, /Read failed/);
+  // Error text sourced from `result` (since `error`/`errorMessage` absent).
+  assert.match(all, /ENOENT/);
+  // The done-success line MUST NOT appear.
+  assert.doesNotMatch(all, /press \[r\] to expand/);
+});
+
+test("Renderer: tool result with isError:false renders the success path", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: { phase: "result", name: "Read", isError: false, result: "file contents" },
+    });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("\n");
+  // Success path fires.
+  assert.match(all, /press \[r\] to expand/);
+  // Failure header MUST NOT appear.
+  assert.doesNotMatch(all, /Read failed/);
+});
+
 test("Renderer: tool failure caps multi-line error at 4 lines + ellipsis", () => {
   const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
   const cap = captureStdout();
