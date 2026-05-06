@@ -165,6 +165,12 @@ export class StreamRenderer {
       durationMs?: number;
       itemId?: string;
       toolCallId?: string;
+      // Failure-detail fields (V1.1 — Item 4).
+      error?: string;
+      errorMessage?: string;
+      stderr?: string;
+      exitCode?: number;
+      status?: string;
     } | undefined;
     if (!data) return;
     const phase = data.phase ?? "update";
@@ -200,7 +206,35 @@ export class StreamRenderer {
     }
 
     if (phase === "failed" || phase === "error") {
-      println(c.red(`└─ ${name} failed`));
+      // V1.1 — Item 4: surface failure detail so the user can act.
+      // Order: exit code · error message · stderr · duration. Each is
+      // optional; the header always renders.
+      const parts: string[] = [];
+      if (typeof data.exitCode === "number") {
+        parts.push(`exit ${data.exitCode}`);
+      }
+      const dur = typeof data.durationMs === "number"
+        ? ` ${(data.durationMs / 1000).toFixed(1)}s`
+        : "";
+      const headerSuffix = parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
+      println(c.red(`└─ ${name} failed${headerSuffix}${dur}`));
+
+      const errMsg = data.error ?? data.errorMessage;
+      if (typeof errMsg === "string" && errMsg.length > 0) {
+        const lines = errMsg.split("\n").slice(0, 4);
+        for (const line of lines) {
+          println(c.red(`   ${c.dim("error:")} ${truncate(line, termWidth() - 11)}`));
+        }
+        if (errMsg.split("\n").length > 4) {
+          println(c.dim(`   … (more error lines)`));
+        }
+      }
+
+      const stderr = data.stderr;
+      if (typeof stderr === "string" && stderr.length > 0) {
+        const summary = this.summarizeResult(stderr);
+        println(c.red(`   ${c.dim("stderr:")} ${summary}`));
+      }
     }
   }
 
