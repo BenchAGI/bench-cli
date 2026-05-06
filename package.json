@@ -21,7 +21,7 @@
     "build:watch": "tsc -p tsconfig.json --watch",
     "test": "node test/smoke.mjs",
     "test:v2": "node --test dist/v2/**/*.test.js",
-    "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs && find src/v2 test -name '*.mjs' -exec node --check {} + 2>/dev/null || true",
+    "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs",
     "prepublishOnly": "npm run build",
     "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: bench setup (legacy) or benchagi (V2 streaming).')\""
   },

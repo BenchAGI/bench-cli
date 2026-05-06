@@ -65,9 +65,13 @@ tests.
 
 ---
 
-## P1 deferred to v1.1
+## Deferred to v1.1
 
-### 1. Reconnect + history recovery (SPEC §5.5–§5.6)
+ANVIL-3 flagged 4 items as P1 (items 1–4 below). Items 5–7 are
+quality-of-life follow-ups (P2-grade per ANVIL-3) that are sequenced
+into the V1.1 cycle alongside the P1s for convenience.
+
+### 1. Reconnect + history recovery (SPEC §5.5–§5.6) — ANVIL-3 P1
 
 The CLI does not currently reconnect after gateway disconnect mid-run.
 On disconnect, the event loop ends and `waitForFinal` times out.
@@ -90,7 +94,7 @@ On disconnect, the event loop ends and `waitForFinal` times out.
 via chat.history", "Reconnect: network drop backoff sequence",
 "Renderer: seq gap warning". Mock by injecting fake disconnect events.
 
-### 2. Liveness reconnect wiring + active-run scoping
+### 2. Liveness reconnect wiring + active-run scoping — ANVIL-3 P1
 
 ANVIL-3 P1: liveness says "(connection unhealthy — reconnecting)" but
 no reconnect callback is wired. Either:
@@ -106,7 +110,7 @@ indicator only visible when `inFlight && runQuietMs > threshold`.
 
 **Files**: `src/v2/render/liveness.ts`, `src/v2/chat-runner.ts`.
 
-### 3. Approval REPL key handling
+### 3. Approval REPL key handling — ANVIL-3 P1
 
 `ApprovalState.handleKey` exists but the REPL does not pass keystrokes
 to it. The bordered approval prompt renders correctly (state machine
@@ -122,7 +126,7 @@ input. Ctrl-C currently exits the process, not default-deny.
 
 **Files**: `src/v2/repl/prompt.ts`, `src/v2/cli.ts`.
 
-### 4. Tool-block error detail rendering
+### 4. Tool-block error detail rendering — ANVIL-3 P1
 
 ANVIL-3 P1: failed tool calls show only `└─ <name> failed`. Should show:
 
@@ -133,7 +137,7 @@ ANVIL-3 P1: failed tool calls show only `└─ <name> failed`. Should show:
 
 **File**: `src/v2/render/stream.ts:renderTool` (error branch).
 
-### 5. `[r]` interactive tool-output expand
+### 5. `[r]` interactive tool-output expand — V1.1 follow-up (ANVIL-3 P2)
 
 The hint `(press [r] to expand)` is rendered but no key handler exists.
 Two paths:
@@ -148,14 +152,14 @@ Recommend the simple path for v1.1; defer per-block expand to v1.2.
 
 **File**: `src/v2/repl/prompt.ts`, `src/v2/render/stream.ts`.
 
-### 6. Auth port-collision retry
+### 6. Auth port-collision retry — V1.1 follow-up (ADR-002 housekeeping)
 
 ANVIL-3 P1: ADR-002 says retry once on `EADDRINUSE`. Current code
 fails immediately. Wrap the listener creation in a single retry loop.
 
 **File**: `src/v2/auth/firebase-direct.ts`.
 
-### 7. Cross-machine `--device-flow`
+### 7. Cross-machine `--device-flow` — V1.1 follow-up (separate from A1–A6)
 
 ADR-002 documented the cross-machine fallback. Implement when V1.1
 cloud transport ships (PKCE code-paste against

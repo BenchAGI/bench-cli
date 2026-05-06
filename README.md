@@ -204,7 +204,7 @@ shells out to the local `openclaw` binary, which owns auth + gateway state.
 ```bash
 npm test            # legacy bench smoke tests (V1)
 npm run build       # compile V2 TypeScript to dist/
-npm run test:v2     # 34 V2 unit tests (event router, probe, liveness, state)
+npm run test:v2     # V2 unit tests (event router, probe, liveness, state, agents)
 npm run lint
 ```
 
