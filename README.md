@@ -1,5 +1,51 @@
 # BenchAGI CLI
 
+This package ships **two binaries** from one install:
+
+- **`benchagi`** (V2, since 1.0) — streaming-aware terminal client. Connects
+  to the local OpenClaw Gateway over WebSocket and renders the full event
+  taxonomy: tool calls, assistant deltas, command output, patches, plans,
+  approvals. Two-clock liveness indicator for batch backends so silence is
+  visible silence with a countdown, never a frozen process. **Use this for
+  daily interactive work.**
+- **`bench`** (V1 wrapper, kept for compatibility) — thin shell-out around
+  `openclaw` for the everyday verbs `ask`, `chat`, `feed`, `tail`,
+  `commitments`, `agents`, `sessions`, `tasks`, `status`, `setup`. Use this
+  for the verbs that haven't been ported to native protocol yet.
+
+Both binaries discover agents from the same `openclaw.json`, share the
+same install URL, and live in the same npm package + Homebrew tap. Pick
+the one that fits the moment.
+
+## V2 (`benchagi`) at a glance
+
+```text
+$ benchagi doctor
+✓ local OpenClaw Gateway reachable
+✓ gateway protocol v3 (server 2026.5.2)
+✓ required methods present
+  policy: maxPayload=26214400B, tickInterval=30000ms
+✓ 7 agent(s) discovered
+⊘ not signed in (Firebase Direct optional in V1)
+
+$ benchagi --agent kestrel-coder "ping"
+[run started · 174502cd-…]
+HEARTBEAT_OK
+[run ended]
+
+$ benchagi
+benchagi 1.0.0-beta.1 · agent kestrel-aurelius · type /exit or Ctrl-D to quit
+> What did Sage merge yesterday?
+…streaming reply with live tool blocks…
+
+> /exit
+```
+
+Full V2 docs: see `docs/v2/SPEC.md` and the wiki entry at
+`~/.openclaw/wiki/main/_boards/nodes/master/benchagi.md`.
+
+## V1 (`bench`) at a glance
+
 `bench` is the BenchAGI command line. It gives you the everyday verbs you
 already use in Codex / Claude Code — `ask`, `chat`, `feed`, `tail` — pointed
 at your local OpenClaw agent runtime.
@@ -156,23 +202,37 @@ shells out to the local `openclaw` binary, which owns auth + gateway state.
 ## Tests
 
 ```bash
-npm test   # 25 smoke tests covering parser, formatter, --help, live JSON
+npm test            # legacy bench smoke tests (V1)
+npm run build       # compile V2 TypeScript to dist/
+npm run test:v2     # 34 V2 unit tests (event router, probe, liveness, state)
 npm run lint
 ```
 
 ## Roadmap
 
-- [x] Per-agent `bench chat` REPL (in-process, sidesteps openclaw TUI's
-      single-default-agent limitation)
-- [x] `bench tail` over `openclaw logs --follow --json`
-- [x] `bench commitments`
-- [x] `bench setup` readiness check (incl. optional `--fix`)
+V1 (`bench` wrapper):
+
+- [x] Per-agent `bench chat` REPL
+- [x] `bench tail` / `bench commitments` / `bench setup`
 - [x] Shell completion (bash + zsh)
 - [x] `scripts/install.sh` curl-pipe installer
-- [ ] Homebrew tap (`benchagi/homebrew-tap`) with formula `bench`
-- [ ] `bench send <agent> <session> ...` to address an explicit session id
-- [ ] First-class streaming via gateway WebSocket (replaces shelling out)
-- [ ] `bench update` self-update against npm registry
+
+V2 (`benchagi` native streaming):
+
+- [x] First-class streaming via Gateway WebSocket (closes V1's roadmap line)
+- [x] Full event-taxonomy renderer (`agent-events.ts`'s 11 streams)
+- [x] Two-clock liveness indicator for batch backends
+- [x] Approval state machine (exec.approval.resolve, plugin.approval.resolve)
+- [x] Device-identity signed handshake (piggybacks on openclaw's pairing)
+- [x] Auto-discovery of gateway token from `openclaw.json`
+- [x] Hammer-Anvil reviewed spec (PRE-SPEC-VERIFICATION + 6 ADRs + ANVIL-2)
+- [ ] Homebrew tap version bump for v1.0.0
+- [ ] Cloud-relay primary transport (v1.1, gated on cloud chat endpoint)
+- [ ] Cross-machine `--device-flow` (PKCE code-paste)
+- [ ] Migrate useful `bench` verbs into `benchagi` native protocol
+
+V2 spec docs in `docs/v2/`. Wiki entry at
+`~/.openclaw/wiki/main/_boards/nodes/master/benchagi.md`.
 
 ## License
 

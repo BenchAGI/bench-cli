@@ -1,28 +1,44 @@
 {
   "name": "@benchagi/cli",
-  "version": "0.2.0",
-  "description": "BenchAGI CLI — practical day-to-day access to the OpenClaw agent system (ask, chat, feed, sessions, tasks, tail, commitments).",
+  "version": "1.0.0-beta.1",
+  "description": "BenchAGI CLI — streaming-aware terminal access to the Bench/OpenClaw agent system. Includes the new `benchagi` binary (V2, native WebSocket streaming) and the legacy `bench` wrapper.",
   "type": "module",
   "bin": {
-    "bench": "./bin/bench.mjs"
+    "bench": "./bin/bench.mjs",
+    "benchagi": "./bin/benchagi.mjs"
   },
   "files": [
     "bin/",
     "src/",
+    "dist/",
     "scripts/install.sh",
     "completions/",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
     "test": "node test/smoke.mjs",
-    "lint": "node --check bin/bench.mjs && find src test -name '*.mjs' -exec node --check {} +",
-    "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: bench setup')\""
+    "test:v2": "node --test dist/v2/**/*.test.js",
+    "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs && find src/v2 test -name '*.mjs' -exec node --check {} + 2>/dev/null || true",
+    "prepublishOnly": "npm run build",
+    "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: bench setup (legacy) or benchagi (V2 streaming).')\""
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.10"
   },
-  "keywords": ["bench", "benchagi", "openclaw", "agents", "cli", "ai"],
+  "dependencies": {
+    "ws": "^8.18.0",
+    "keytar": "^7.9.0",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0"
+  },
+  "keywords": ["bench", "benchagi", "openclaw", "agents", "cli", "ai", "streaming"],
   "homepage": "https://github.com/BenchAGI/bench-cli",
   "repository": {
     "type": "git",
