@@ -27,6 +27,8 @@ function makeRouter() {
       onShutdown: (reason) => log.push({ kind: "shutdown", payload: reason }),
       onApprovalResolved: (kind) => log.push({ kind: `approval.${kind}.resolved` }),
       onUnknown: (event) => log.push({ kind: "unknown", payload: event }),
+      onSeqGap: (runId, prevSeq, nextSeq) =>
+        log.push({ kind: "seqGap", payload: { runId, prevSeq, nextSeq } }),
     },
     liveness,
   );
@@ -136,4 +138,84 @@ test("sessions.changed routes to handler", () => {
   const { router, log } = makeRouter();
   router.dispatch(frame("sessions.changed", {}));
   assert.equal(log[0]?.kind, "sessionsChanged");
+});
+
+// V1.1 — Item 1: SPEC §13 "Renderer: seq gap warning"
+test("emits onSeqGap when an agent seq jumps by more than 1", () => {
+  const { router, log } = makeRouter();
+  const runId = "r1";
+  router.dispatch(frame("agent", {
+    runId, seq: 1, stream: "tool", ts: 0, data: { toolCallId: "tc1" },
+  } satisfies AgentEventPayload));
+  // seq=2 missed entirely; the gateway sends us seq=4 next.
+  router.dispatch(frame("agent", {
+    runId, seq: 4, stream: "tool", ts: 0, data: { toolCallId: "tc4" },
+  } satisfies AgentEventPayload));
+
+  const gaps = log.filter((e) => e.kind === "seqGap");
+  assert.equal(gaps.length, 1);
+  assert.deepEqual(gaps[0]?.payload, { runId, prevSeq: 1, nextSeq: 4 });
+
+  // The agent event itself is still rendered.
+  const agents = log.filter((e) => e.kind === "agent");
+  assert.equal(agents.length, 2);
+});
+
+test("does NOT emit onSeqGap when seq advances by exactly 1", () => {
+  const { router, log } = makeRouter();
+  const runId = "r1";
+  for (let seq = 1; seq <= 5; seq++) {
+    router.dispatch(frame("agent", {
+      runId, seq, stream: "tool", ts: 0, data: { toolCallId: `tc${seq}` },
+    } satisfies AgentEventPayload));
+  }
+  assert.equal(log.filter((e) => e.kind === "seqGap").length, 0);
+  assert.equal(log.filter((e) => e.kind === "agent").length, 5);
+});
+
+test("does NOT emit onSeqGap when out-of-order agent events arrive (already deduped)", () => {
+  // The dedupe layer collapses repeat keys before gap-detection runs,
+  // so a chat.history replay that re-sends previously-seen events
+  // produces no spurious gap warnings even though the seq numbers
+  // appear out of order.
+  const { router, log } = makeRouter();
+  const runId = "r1";
+  router.dispatch(frame("agent", {
+    runId, seq: 5, stream: "tool", ts: 0, data: { toolCallId: "tc5" },
+  } satisfies AgentEventPayload));
+  router.dispatch(frame("agent", {
+    runId, seq: 5, stream: "tool", ts: 0, data: { toolCallId: "tc5" },
+  } satisfies AgentEventPayload));
+  assert.equal(log.filter((e) => e.kind === "seqGap").length, 0);
+  assert.equal(log.filter((e) => e.kind === "agent").length, 1);
+});
+
+// V1.1 — Item 1: SPEC §13 "Reconnect: in-flight run recovery via chat.history"
+// The router-level guarantee is: a chat.history replay that re-sends
+// already-seen events deduplicates against the live event set, so no
+// duplicate output is rendered.
+test("chat.history replay does not double-render events the router has already seen", () => {
+  const { router, log } = makeRouter();
+  const runId = "r1";
+  const live: AgentEventPayload[] = [
+    { runId, seq: 1, stream: "tool", ts: 0, data: { toolCallId: "tc1" } },
+    { runId, seq: 2, stream: "tool", ts: 0, data: { toolCallId: "tc2" } },
+    { runId, seq: 3, stream: "tool", ts: 0, data: { toolCallId: "tc3" } },
+  ];
+  for (const ap of live) router.dispatch(frame("agent", ap));
+  assert.equal(log.filter((e) => e.kind === "agent").length, 3);
+
+  // Simulate a reconnect: chat.history returns the events we already
+  // received PLUS one event we missed (seq=4). Replay through the
+  // same router.
+  const replay: AgentEventPayload[] = [
+    ...live,
+    { runId, seq: 4, stream: "tool", ts: 0, data: { toolCallId: "tc4" } },
+  ];
+  for (const ap of replay) router.dispatch(frame("agent", ap));
+
+  // Total unique agent events = 4. Seq-gap warning must not fire
+  // (we have an unbroken 1..4 sequence).
+  assert.equal(log.filter((e) => e.kind === "agent").length, 4);
+  assert.equal(log.filter((e) => e.kind === "seqGap").length, 0);
 });
