@@ -25,7 +25,51 @@ function constantTimeEq(a: string, b: string): boolean {
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
+/**
+ * Browser-handoff login flow with EADDRINUSE retry per ADR-002
+ * (V1.1 — Item 6). If the listener can't bind because the
+ * randomly-picked port is in use, pick a fresh port once and retry.
+ * After a second collision we give up.
+ *
+ * If the caller supplied an explicit `opts.port`, we don't retry —
+ * they asked for that exact port.
+ */
 export async function loginFlow(opts: LoginOptions = {}): Promise<{
+  email: string;
+  uid: string;
+}> {
+  return await retryOnAddrInUse(loginFlowAttempt, opts);
+}
+
+/**
+ * Run `attempt(opts)`. If it throws an EADDRINUSE error AND the
+ * caller did not pin the port, retry exactly once with a fresh
+ * random port. All other errors bubble up untouched. Exported for
+ * unit testing — production callers should use `loginFlow`.
+ * V1.1 — Item 6.
+ */
+export async function retryOnAddrInUse<T>(
+  attempt: (opts: LoginOptions) => Promise<T>,
+  opts: LoginOptions,
+): Promise<T> {
+  try {
+    return await attempt(opts);
+  } catch (err) {
+    if (opts.port === undefined && isAddrInUseError(err)) {
+      return await attempt({ ...opts, port: randomInt(8000, 10_000) });
+    }
+    throw err;
+  }
+}
+
+export function isAddrInUseError(err: unknown): boolean {
+  return Boolean(
+    err && typeof err === "object" &&
+    (err as { code?: string }).code === "EADDRINUSE",
+  );
+}
+
+async function loginFlowAttempt(opts: LoginOptions = {}): Promise<{
   email: string;
   uid: string;
 }> {
