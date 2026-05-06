@@ -132,6 +132,29 @@ test("Approval: peer resolution with non-matching id leaves pending intact", asy
   assert.equal(state.isPending(), true);
 });
 
+// V1.1 — Item 3 (Codex Anvil P1): sync predicate
+test("Approval: canConsumeKey is synchronous and matches handleKey's decision", () => {
+  const { state } = makeState();
+  // No pending — nothing is consumable.
+  assert.equal(state.canConsumeKey("a"), false);
+  assert.equal(state.canConsumeKey("d"), false);
+  assert.equal(state.canConsumeKey("x"), false);
+
+  requestExecApproval(state, "ap-sync");
+  // Now [A]/[D] are consumable.
+  assert.equal(state.canConsumeKey("a"), true);
+  assert.equal(state.canConsumeKey("A"), true);
+  assert.equal(state.canConsumeKey("d"), true);
+  assert.equal(state.canConsumeKey("D"), true);
+  // Other keys are not.
+  assert.equal(state.canConsumeKey("x"), false);
+  assert.equal(state.canConsumeKey(" "), false);
+  assert.equal(state.canConsumeKey("\r"), false);
+
+  // Predicate is observation-only — does not clear pending.
+  assert.equal(state.isPending(), true);
+});
+
 test("Approval: agent-stream resolved phase clears pending if id matches", async () => {
   const { state, resolved } = makeState();
   requestExecApproval(state, "ap-stream");

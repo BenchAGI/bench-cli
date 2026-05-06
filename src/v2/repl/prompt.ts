@@ -14,6 +14,14 @@ export type ReplCallbacks = {
   onInterrupt(): Promise<void>;
   onExit(): Promise<void>;
   onKey?(key: string): Promise<boolean>;
+  /**
+   * Optional sync predicate that mirrors `onKey`'s consume-or-not
+   * decision without firing the side-effect resolve. The REPL uses
+   * it to clear its line buffer synchronously, before the async
+   * `onKey` yields to the event loop, avoiding a `[A]` + Enter race.
+   * V1.1 — Item 3 (Codex Anvil P1).
+   */
+  canConsumeKey?(key: string): boolean;
 };
 
 export class Repl {
@@ -63,16 +71,20 @@ export class Repl {
       // Readline puts stdin in raw mode when `terminal: true`, so keypress
       // events fire per-keystroke. V1.1 — Item 3.
       const stdin = process.stdin;
-      stdin.on("keypress", async (str: string, key: { name?: string; ctrl?: boolean; sequence?: string } | undefined) => {
-        if (this.busy && this.cb.onKey && key?.sequence) {
-          const consumed = await this.cb.onKey(key.sequence);
-          if (consumed) {
-            // Strip the consumed character from readline's line buffer
-            // so that pressing Enter later doesn't re-send the
-            // approval key as a chat message. Ctrl-U kills the line.
+      stdin.on("keypress", (str: string, key: { name?: string; ctrl?: boolean; sequence?: string } | undefined) => {
+        if (!this.busy || !key?.sequence) return;
+        // Sync predicate: would onKey consume this key? If yes, we
+        // clear the line buffer SYNCHRONOUSLY (deferred to nextTick
+        // so readline's own keypress listener processes the original
+        // char first). The async resolve fires fire-and-forget. This
+        // closes the race where a fast `a` + Enter could emit a stray
+        // chat message before the async resolve completed (Codex
+        // Anvil P1).
+        if (this.cb.canConsumeKey?.(key.sequence) && this.cb.onKey) {
+          void this.cb.onKey(key.sequence);
+          process.nextTick(() => {
             this.rl.write(null, { ctrl: true, name: "u" });
-            return;
-          }
+          });
         }
       });
     }

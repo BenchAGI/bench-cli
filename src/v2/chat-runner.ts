@@ -385,6 +385,16 @@ export class ChatRunner {
   }
 
   /**
+   * Sync predicate that mirrors `handleApprovalKey`'s consume-or-not
+   * decision without firing any side effects. Used by the REPL to
+   * synchronously clear its line buffer before the async resolve
+   * yields to the event loop. V1.1 — Item 3 (Codex Anvil P1).
+   */
+  canHandleApprovalKey(key: string): boolean {
+    return this.approval?.canConsumeKey(key) ?? false;
+  }
+
+  /**
    * Route a single keystroke from the REPL to the approval state
    * machine. Returns true if the key was consumed by an approval
    * handler ([A]/[D]), false otherwise (REPL passes through).

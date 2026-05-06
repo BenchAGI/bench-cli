@@ -70,6 +70,20 @@ export class ApprovalState {
     }
   }
 
+  /**
+   * Synchronous predicate — would `handleKey(key)` consume this
+   * keystroke right now? Lets the REPL decide whether to clear the
+   * readline line buffer SYNCHRONOUSLY, before any await yields to
+   * the event loop. Without a sync gate, a fast `a` + Enter could
+   * race the async resolve and emit a stray chat message. V1.1 —
+   * Item 3 (Codex Anvil P1).
+   */
+  canConsumeKey(key: string): boolean {
+    if (!this.pending) return false;
+    const lower = key.toLowerCase();
+    return lower === "a" || lower === "d";
+  }
+
   // Returns true if the keystroke was consumed by approval handling.
   async handleKey(key: string): Promise<boolean> {
     if (!this.pending) return false;

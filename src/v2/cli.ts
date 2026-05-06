@@ -189,6 +189,10 @@ async function replLoop(runner: ChatRunner, agentId: string): Promise<void> {
         onKey: async (key) => {
           return await runner.handleApprovalKey(key);
         },
+        // V1.1 — Item 3 (Codex Anvil P1): sync predicate so the
+        // REPL can clear its line buffer before the async resolve
+        // yields to the event loop.
+        canConsumeKey: (key) => runner.canHandleApprovalKey(key),
       },
     );
     void repl.start();
