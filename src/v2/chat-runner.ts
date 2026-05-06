@@ -389,20 +389,34 @@ export class ChatRunner {
    * decision without firing any side effects. Used by the REPL to
    * synchronously clear its line buffer before the async resolve
    * yields to the event loop. V1.1 — Item 3 (Codex Anvil P1).
+   *
+   * Now also consumes [r] for the V1.1 Item 5 expand-toggle.
    */
   canHandleApprovalKey(key: string): boolean {
-    return this.approval?.canConsumeKey(key) ?? false;
+    if (this.approval?.canConsumeKey(key)) return true;
+    if (key === "r" || key === "R") return true;
+    return false;
   }
 
   /**
-   * Route a single keystroke from the REPL to the approval state
-   * machine. Returns true if the key was consumed by an approval
-   * handler ([A]/[D]), false otherwise (REPL passes through).
-   * V1.1 — Item 3.
+   * Route a single keystroke from the REPL.
+   *
+   * - [A]/[D] resolve a pending approval (V1.1 — Item 3).
+   * - [r] flips the renderer's per-session full-tool-output flag
+   *   (V1.1 — Item 5). A status line confirms the new state.
+   *
+   * Returns true if the key was consumed, false otherwise.
    */
   async handleApprovalKey(key: string): Promise<boolean> {
-    if (!this.approval) return false;
-    return await this.approval.handleKey(key);
+    if (this.approval && await this.approval.handleKey(key)) {
+      return true;
+    }
+    if (key === "r" || key === "R") {
+      const on = this.renderer.toggleFullOutput();
+      println(c.dim(`(expand mode: ${on ? "on" : "off"})`));
+      return true;
+    }
+    return false;
   }
 
   /**
