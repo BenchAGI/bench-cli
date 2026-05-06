@@ -163,6 +163,54 @@ test("Renderer: tool result with isError:false renders the success path", () => 
   assert.doesNotMatch(all, /Read failed/);
 });
 
+// V1.1 — Item 5: SPEC §13 "REPL: [r] toggles tool expansion for the session"
+test("Renderer: toggleFullOutput flips the per-session expand flag", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  // Default is OFF.
+  assert.equal(r.isFullOutput(), false);
+  // First [r] press → ON.
+  const first = r.toggleFullOutput();
+  assert.equal(first, true);
+  assert.equal(r.isFullOutput(), true);
+  // Second [r] press → OFF.
+  const second = r.toggleFullOutput();
+  assert.equal(second, false);
+  assert.equal(r.isFullOutput(), false);
+});
+
+test("Renderer: toggleFullOutput affects subsequent renderTool 'update' phase", () => {
+  const r = new StreamRenderer({ ...DEFAULT_RENDERER_OPTIONS, showFullToolOutput: false });
+
+  // Phase 'update' with partialResult: nothing renders by default.
+  let cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: { phase: "update", name: "Bash", partialResult: "intermediate-stdout-line" },
+    });
+  } finally { cap.restore(); }
+  assert.equal(
+    cap.lines.filter((l) => /intermediate-stdout-line/.test(l)).length,
+    0,
+    "partialResult should be suppressed when showFullToolOutput=false",
+  );
+
+  // Toggle to ON, then re-render: now partialResult appears.
+  r.toggleFullOutput();
+  cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 2, stream: "tool", ts: 0,
+      data: { phase: "update", name: "Bash", partialResult: "intermediate-stdout-line" },
+    });
+  } finally { cap.restore(); }
+  assert.match(
+    cap.lines.join("\n"),
+    /intermediate-stdout-line/,
+    "partialResult should be visible after toggleFullOutput=true",
+  );
+});
+
 test("Renderer: tool failure caps multi-line error at 4 lines + ellipsis", () => {
   const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
   const cap = captureStdout();

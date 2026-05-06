@@ -24,6 +24,21 @@ export class StreamRenderer {
 
   constructor(private opts: RendererOptions = DEFAULT_RENDERER_OPTIONS) {}
 
+  /**
+   * Flip the per-session full-tool-output flag (V1.1 — Item 5).
+   * Returns the new value so callers can render a status line.
+   * Bound to the [r] keystroke in the REPL.
+   */
+  toggleFullOutput(): boolean {
+    this.opts = { ...this.opts, showFullToolOutput: !this.opts.showFullToolOutput };
+    return this.opts.showFullToolOutput;
+  }
+
+  /** Read-only view of the current full-output flag. V1.1 — Item 5. */
+  isFullOutput(): boolean {
+    return this.opts.showFullToolOutput;
+  }
+
   renderAgent(p: AgentEventPayload): void {
     switch (p.stream) {
       case "lifecycle":
