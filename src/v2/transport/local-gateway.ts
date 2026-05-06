@@ -324,6 +324,11 @@ export class LocalGatewayWsTransport implements Transport {
     });
 
     ws.on("close", () => {
+      // Stale-close guard: a prior socket's close event MUST NOT poison
+      // the active socket if a reconnect already swapped `this.ws` out.
+      // Codex Anvil P1.
+      if (this.ws !== ws) return;
+
       // Pending requests can never be auto-replayed; reject them so the
       // caller can decide. Event resolvers stay pending across a network
       // reconnect — only drain them on user-initiated close.
