@@ -2,8 +2,10 @@
 // approval state into a single durable run loop. Used by the REPL and by
 // single-turn commands.
 
+import { appendFile } from "node:fs/promises";
 import { LocalGatewayWsTransport } from "./transport/local-gateway.js";
 import { resolveGatewayToken, resolveGatewayPassword } from "./auth/gateway-token.js";
+import { loadFreshFirebaseIdToken } from "./auth/firebase-token.js";
 import { EventRouter } from "./render/event-router.js";
 import { StreamRenderer, DEFAULT_RENDERER_OPTIONS } from "./render/stream.js";
 import { LivenessIndicator } from "./render/liveness.js";
@@ -22,6 +24,7 @@ export type RunnerOptions = {
   gatewayUrl?: string;
   gatewayToken?: string;
   gatewayPassword?: string;
+  traceFramesPath?: string;
 };
 
 export class ChatRunner {
@@ -48,9 +51,14 @@ export class ChatRunner {
   // order. This prevents the live-vs-history ordering race that would
   // otherwise produce false seq-gap warnings (Codex Anvil P1).
   private liveFrameBuffer: EventFrame[] = [];
+  private traceFramesPath: string | null = null;
 
   constructor(private opts: RunnerOptions) {
-    this.transport = new LocalGatewayWsTransport({ url: opts.gatewayUrl });
+    this.traceFramesPath = opts.traceFramesPath ?? process.env.BENCHAGI_TRACE_FRAMES ?? null;
+    this.transport = new LocalGatewayWsTransport({
+      url: opts.gatewayUrl,
+      rawFrameLog: (direction, raw) => this.traceRawFrame(direction, raw),
+    });
     this.renderer = new StreamRenderer({
       ...DEFAULT_RENDERER_OPTIONS,
       showFullToolOutput: opts.showFullToolOutput ?? false,
@@ -317,6 +325,16 @@ export class ChatRunner {
     }
   }
 
+  private traceRawFrame(direction: "in" | "out", raw: string): void {
+    if (!this.traceFramesPath) return;
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      direction,
+      raw,
+    });
+    void appendFile(this.traceFramesPath, `${line}\n`).catch(() => {});
+  }
+
   async waitForFinal(timeoutMs: number): Promise<"final" | "aborted" | "error" | "timeout"> {
     return await new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -354,6 +372,7 @@ export class ChatRunner {
     }
 
     const idempotencyKey = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+    const firebaseIdToken = await loadFreshFirebaseIdToken();
 
     try {
       await this.transport.request("chat.send", {
@@ -361,6 +380,9 @@ export class ChatRunner {
         message,
         idempotencyKey,
         deliver: true,
+        ...(firebaseIdToken
+          ? { cloudAuth: { firebaseIdToken } }
+          : {}),
       });
     } catch (err) {
       // TODO(V1.1 follow-up — Codex Anvil P1): chat.send acceptance race.
