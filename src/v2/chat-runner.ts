@@ -384,6 +384,31 @@ export class ChatRunner {
     }
   }
 
+  /**
+   * Route a single keystroke from the REPL to the approval state
+   * machine. Returns true if the key was consumed by an approval
+   * handler ([A]/[D]), false otherwise (REPL passes through).
+   * V1.1 — Item 3.
+   */
+  async handleApprovalKey(key: string): Promise<boolean> {
+    if (!this.approval) return false;
+    return await this.approval.handleKey(key);
+  }
+
+  /**
+   * SIGINT/Ctrl-C disposition. If an approval is pending, default-
+   * deny it (per SPEC §6.5). Otherwise, abort the current run.
+   * V1.1 — Item 3.
+   */
+  async interruptCurrent(): Promise<"denied" | "aborted"> {
+    if (this.approval?.isPending()) {
+      await this.approval.denyOnInterrupt();
+      return "denied";
+    }
+    await this.abortCurrent();
+    return "aborted";
+  }
+
   async close(): Promise<void> {
     if (this.liveness) this.liveness.stop();
     await this.transport.close();

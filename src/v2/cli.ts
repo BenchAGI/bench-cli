@@ -174,12 +174,20 @@ async function replLoop(runner: ChatRunner, agentId: string): Promise<void> {
           await new Promise((r) => setTimeout(r, 200));
         },
         onInterrupt: async () => {
-          await runner.abortCurrent();
-          println(c.dim("(aborted)"));
+          // V1.1 — Item 3: Ctrl-C during a pending approval default-
+          // denies that approval rather than aborting the run.
+          const reason = await runner.interruptCurrent();
+          println(c.dim(reason === "denied" ? "(approval denied)" : "(aborted)"));
         },
         onExit: async () => {
           println(c.dim("bye"));
           resolve();
+        },
+        // V1.1 — Item 3: route raw keystrokes during a busy run to
+        // the approval state machine. [A]/[D] resolve a pending
+        // approval; everything else is ignored.
+        onKey: async (key) => {
+          return await runner.handleApprovalKey(key);
         },
       },
     );

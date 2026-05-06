@@ -60,11 +60,19 @@ export class Repl {
 
     if (process.stdin.isTTY === true) {
       // Single-key handling for [A]/[D] approval shortcuts and [r] expand.
+      // Readline puts stdin in raw mode when `terminal: true`, so keypress
+      // events fire per-keystroke. V1.1 — Item 3.
       const stdin = process.stdin;
       stdin.on("keypress", async (str: string, key: { name?: string; ctrl?: boolean; sequence?: string } | undefined) => {
         if (this.busy && this.cb.onKey && key?.sequence) {
           const consumed = await this.cb.onKey(key.sequence);
-          if (consumed) return;
+          if (consumed) {
+            // Strip the consumed character from readline's line buffer
+            // so that pressing Enter later doesn't re-send the
+            // approval key as a chat message. Ctrl-U kills the line.
+            this.rl.write(null, { ctrl: true, name: "u" });
+            return;
+          }
         }
       });
     }
