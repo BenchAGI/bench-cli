@@ -58,11 +58,16 @@ export class LivenessIndicator {
 
   /**
    * Toggle whether a run is currently in flight. Indicator is hidden
-   * (and tick is a no-op) while no run is active. V1.1 — Item 2.
+   * (and tick is a no-op) while no run is active.
+   *
+   * Edge case (Codex Anvil P2): if a reconnect is in flight when the
+   * run completes, the indicator must STAY visible — the user is
+   * still waiting for the transport to recover. Only hide when no
+   * reconnect is pending. V1.1 — Item 2.
    */
   setInFlight(value: boolean): void {
     this.inFlight = value;
-    if (!value && this.visible) this.hide();
+    if (!value && this.visible && this.reconnectAttempt === null) this.hide();
   }
 
   /**
