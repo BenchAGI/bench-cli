@@ -144,20 +144,46 @@ type CallbackResult =
   | { kind: "ok"; creds: FirebaseCreds }
   | { kind: "err"; error: string };
 
-async function handle(
+/**
+ * The HTTP request handler for the cli-callback listener. Exported so
+ * the PNA preflight regression test can exercise it directly without
+ * spinning up the full `loginFlow` (which would call `saveCreds` and
+ * write fake tokens to the real macOS Keychain — Codex Anvil flagged
+ * this as a BLOCK on the original test). Production use stays through
+ * `loginFlow` → `loginFlowAttempt` → `handle`.
+ */
+export async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   expectedState: string,
   done: (result: CallbackResult) => void,
 ): Promise<void> {
   // CORS preflight only for the allowed origin and only the callback path.
+  //
+  // Chrome's Private Network Access (PNA) sends an additional preflight
+  // when a public-internet origin (https://benchagi.com) tries to fetch
+  // a private/loopback address (http://127.0.0.1:<port>). Without our
+  // explicit consent header (`Access-Control-Allow-Private-Network`),
+  // Chrome 130+ blocks the POST before it ever reaches us — failing
+  // closed with "Permission was denied for this request to access the
+  // loopback address space". We MUST acknowledge the PNA preflight on
+  // the OPTIONS response, and we only do it for the allowed origin.
+  // Spec: https://wicg.github.io/private-network-access/
+  // Chrome rollout: https://developer.chrome.com/blog/private-network-access-preflight
   if (req.method === "OPTIONS" && req.url?.startsWith("/cli-callback")) {
     if (req.headers.origin === ALLOWED_ORIGIN) {
-      res.writeHead(204, {
+      const headers: Record<string, string> = {
         "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
         "Access-Control-Allow-Methods": "POST",
         "Access-Control-Allow-Headers": "Content-Type",
-      });
+      };
+      // Echo PNA consent only if the browser actually asked for it. This
+      // keeps the surface tight: we don't advertise PNA support to clients
+      // that aren't doing PNA, and we still gate on the origin check above.
+      if (req.headers["access-control-request-private-network"] === "true") {
+        headers["Access-Control-Allow-Private-Network"] = "true";
+      }
+      res.writeHead(204, headers);
     } else {
       res.writeHead(403);
     }
