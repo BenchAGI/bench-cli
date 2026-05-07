@@ -135,6 +135,21 @@ if ! command -v bench >/dev/null 2>&1; then
 fi
 ok "bench is available at $(command -v bench)"
 
+step 'Verifying benchagi streaming console'
+if ! command -v benchagi >/dev/null 2>&1; then
+  NPM_BIN=''
+  if command -v npm >/dev/null 2>&1; then
+    NPM_BIN=$(npm bin -g 2>/dev/null || npm prefix -g 2>/dev/null | sed 's:$:/bin:' || printf '%s' '')
+  fi
+
+  if [ -n "$NPM_BIN" ]; then
+    die "benchagi is not on PATH. Add npm global bin to PATH: export PATH=\"$NPM_BIN:\$PATH\""
+  fi
+  die 'benchagi is not on PATH. Add your npm global bin directory to PATH.'
+fi
+benchagi version >/dev/null
+ok "benchagi is available at $(command -v benchagi)"
+
 step 'Running BenchAGI setup'
 if bench setup --help >/dev/null 2>&1; then
   bench setup --non-interactive

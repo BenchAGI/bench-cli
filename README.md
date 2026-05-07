@@ -85,13 +85,18 @@ After install, run:
 
 ```bash
 bench setup
+benchagi doctor
 ```
 
-This verifies that:
+`bench setup` verifies the legacy command surface and local OpenClaw readiness:
 1. `openclaw` is on your `PATH`,
 2. your local gateway is reachable,
 3. at least one agent is configured,
 4. (optional) the default agent answers a ping.
+
+`benchagi doctor` verifies the V2 streaming console: local Gateway protocol
+support, event-frame methods, discovered agents, and Firebase Direct identity
+when signed in.
 
 If something is off, `bench setup --fix` invokes `openclaw doctor --repair`
 non-interactively to apply the safe migrations.

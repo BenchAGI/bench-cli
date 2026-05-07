@@ -164,6 +164,13 @@ await test("install.sh is POSIX shebang and executable", () => {
   assert.match(text, /set -eu/);
 });
 
+await test("install.sh verifies both bench binaries", () => {
+  const text = readFileSync(path.resolve(__dirname, "../scripts/install.sh"), "utf8");
+  assert.match(text, /Verifying bench binary/);
+  assert.match(text, /Verifying benchagi streaming console/);
+  assert.match(text, /command -v benchagi/);
+});
+
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
 
