@@ -21,6 +21,7 @@ export const DEFAULT_RENDERER_OPTIONS: RendererOptions = {
 
 export class StreamRenderer {
   private currentAssistantHasContent = false;
+  private currentAssistantText = "";
 
   constructor(private opts: RendererOptions = DEFAULT_RENDERER_OPTIONS) {}
 
@@ -81,36 +82,34 @@ export class StreamRenderer {
   }
 
   renderChatDelta(payload: unknown): void {
-    const text = extractChatText(payload);
-    if (text.length === 0) return;
-    if (!this.currentAssistantHasContent) {
-      this.renderAssistantLabel();
-      this.currentAssistantHasContent = true;
+    const snapshot = extractChatSnapshotText(payload);
+    if (snapshot.length > 0) {
+      this.renderAssistantSnapshot(snapshot);
+      return;
     }
-    process.stdout.write(text);
+    const delta = extractChatDeltaText(payload);
+    if (delta.length > 0) {
+      this.renderAssistantDelta(delta);
+    }
   }
 
   renderChatFinal(payload: unknown): void {
     const text = extractChatText(payload);
     const errorMessage = (payload as { errorMessage?: string })?.errorMessage;
     const state = (payload as { state?: string })?.state;
-    if (text.length > 0 && !this.currentAssistantHasContent) {
-      // Batch backend delivered final-only; render whole text.
-      this.renderAssistantLabel();
-      process.stdout.write(text);
-    }
+    const wroteText = text.length > 0 ? this.renderAssistantSnapshot(text) : false;
     if (state === "error" && errorMessage) {
-      println();
+      this.finishAssistantLine();
       println(c.red(`error: ${errorMessage}`));
     }
     if (state === "aborted") {
-      println();
+      this.finishAssistantLine();
       println(c.yellow("(aborted)"));
     }
-    if (this.currentAssistantHasContent || text.length > 0 || errorMessage) {
-      println();
-      this.currentAssistantHasContent = false;
+    if (this.currentAssistantHasContent || wroteText) {
+      this.finishAssistantLine();
     }
+    this.currentAssistantText = "";
   }
 
   renderChatSideResult(payload: unknown): void {
@@ -136,8 +135,11 @@ export class StreamRenderer {
     const data = p.data as { phase?: string; runId?: string } | undefined;
     const phase = data?.phase ?? "unknown";
     if (phase === "start" || phase === "started") {
+      this.currentAssistantHasContent = false;
+      this.currentAssistantText = "";
       println(c.dim(`[run started · ${data?.runId ?? p.runId}]`));
     } else if (phase === "end" || phase === "ended" || phase === "complete") {
+      this.finishAssistantLine();
       println(c.dim(`[run ended]`));
     }
     // Other phases ignored.
@@ -147,26 +149,59 @@ export class StreamRenderer {
     const data = p.data as { phase?: string; text?: string; delta?: string } | undefined;
     if (!data) return;
     if (data.phase === "delta" || data.delta != null) {
-      const text = data.delta ?? data.text ?? "";
-      if (text.length === 0) return;
-      if (!this.currentAssistantHasContent) this.renderAssistantLabel();
-      this.currentAssistantHasContent = true;
-      process.stdout.write(text);
+      if (typeof data.text === "string" && data.text.length > 0) {
+        this.renderAssistantSnapshot(data.text);
+      } else {
+        this.renderAssistantDelta(data.delta ?? "");
+      }
       return;
     }
     if (data.phase === "end" || data.phase === "final") {
       const text = data.text ?? "";
-      if (text.length > 0 && !this.currentAssistantHasContent) {
-        this.renderAssistantLabel();
-        process.stdout.write(text);
+      if (text.length > 0) {
+        this.renderAssistantSnapshot(text);
       }
-      println();
-      this.currentAssistantHasContent = false;
+      this.finishAssistantLine();
+      return;
+    }
+    if (typeof data.text === "string" && data.text.length > 0) {
+      this.renderAssistantSnapshot(data.text);
     }
   }
 
   private renderAssistantLabel(): void {
     process.stdout.write(c.magenta("agent> "));
+  }
+
+  private renderAssistantDelta(delta: string): boolean {
+    if (delta.length === 0) return false;
+    if (!this.currentAssistantHasContent) this.renderAssistantLabel();
+    this.currentAssistantHasContent = true;
+    this.currentAssistantText += delta;
+    process.stdout.write(delta);
+    return true;
+  }
+
+  private renderAssistantSnapshot(snapshot: string): boolean {
+    if (snapshot.length === 0) return false;
+    const suffix = uniqueSnapshotSuffix(this.currentAssistantText, snapshot);
+    if (suffix.length === 0) {
+      if (snapshot.length > this.currentAssistantText.length) {
+        this.currentAssistantText = snapshot;
+      }
+      return false;
+    }
+    if (!this.currentAssistantHasContent) this.renderAssistantLabel();
+    this.currentAssistantHasContent = true;
+    this.currentAssistantText += suffix;
+    process.stdout.write(suffix);
+    return true;
+  }
+
+  private finishAssistantLine(): void {
+    if (!this.currentAssistantHasContent) return;
+    println();
+    this.currentAssistantHasContent = false;
   }
 
   private renderThinking(p: AgentEventPayload): void {
@@ -353,16 +388,21 @@ export class StreamRenderer {
 //   3. legacy payload.text / payload.delta (some clients emit this directly)
 // Mirrors openclaw/src/shared/chat-message-content.ts:extractFirstTextBlock.
 export function extractChatText(payload: unknown): string {
+  const snapshot = extractChatSnapshotText(payload);
+  if (snapshot.length > 0) return snapshot;
+  return extractChatDeltaText(payload);
+}
+
+function extractChatSnapshotText(payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
   const p = payload as {
     message?: { content?: unknown } | string;
     text?: string;
-    delta?: string;
   };
 
-  // 3. legacy fallback
+  // 3. legacy fallback. Treat text as a snapshot; if a payload carries
+  // both text and delta, text is the complete visible assistant text.
   if (typeof p.text === "string") return p.text;
-  if (typeof p.delta === "string") return p.delta;
 
   const message = p.message;
   if (typeof message === "string") return message;
@@ -381,6 +421,30 @@ export function extractChatText(payload: unknown): string {
     if (typeof b.text === "string") acc += b.text;
   }
   return acc;
+}
+
+function extractChatDeltaText(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const delta = (payload as { delta?: unknown }).delta;
+  return typeof delta === "string" ? delta : "";
+}
+
+function uniqueSnapshotSuffix(current: string, snapshot: string): string {
+  if (!snapshot) return "";
+  if (!current) return snapshot;
+  if (snapshot.startsWith(current)) {
+    return snapshot.slice(current.length);
+  }
+  if (current.startsWith(snapshot) || current.endsWith(snapshot)) {
+    return "";
+  }
+  const maxOverlap = Math.min(current.length, snapshot.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (current.slice(-overlap) === snapshot.slice(0, overlap)) {
+      return snapshot.slice(overlap);
+    }
+  }
+  return snapshot;
 }
 
 function summarizeArgs(args: unknown): string {
