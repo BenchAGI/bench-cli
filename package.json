@@ -22,7 +22,6 @@
     "test": "node test/smoke.mjs",
     "test:v2": "node --test dist/v2/**/*.test.js",
     "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs",
-    "prepare": "npm run build",
     "prepublishOnly": "npm run build",
     "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: bench setup (legacy) or benchagi (V2 streaming).')\""
   },
