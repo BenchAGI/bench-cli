@@ -73,13 +73,17 @@ itself. It is idempotent and safe to re-run.
 curl -fsSL https://raw.githubusercontent.com/BenchAGI/bench-cli/main/scripts/install.sh | sh
 ```
 
-…or directly via your favourite package manager:
+...or directly from the GitHub source package:
 
 ```bash
-npm  install -g @benchagi/cli
-pnpm add    -g @benchagi/cli
-yarn global add @benchagi/cli
+npm  install -g github:BenchAGI/bench-cli
+pnpm add    -g github:BenchAGI/bench-cli
+yarn global add github:BenchAGI/bench-cli
 ```
+
+The package name is `@benchagi/cli`; use that form once the public npm package
+is published. Until then, the installer defaults to the GitHub package so a
+fresh machine can install directly from `main`.
 
 After install, run:
 
