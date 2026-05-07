@@ -166,7 +166,7 @@ await test("install.sh is POSIX shebang and executable", () => {
 
 await test("install.sh verifies both bench binaries", () => {
   const text = readFileSync(path.resolve(__dirname, "../scripts/install.sh"), "utf8");
-  assert.match(text, /PACKAGE=\$\{BENCHAGI_PACKAGE:-github:BenchAGI\/bench-cli\}/);
+  assert.match(text, /PACKAGE=\$\{BENCHAGI_PACKAGE:-https:\/\/github\.com\/BenchAGI\/bench-cli\/archive\/refs\/heads\/main\.tar\.gz\}/);
   assert.match(text, /Verifying bench binary/);
   assert.match(text, /Verifying benchagi streaming console/);
   assert.match(text, /command -v benchagi/);

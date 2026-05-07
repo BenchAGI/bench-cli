@@ -51,7 +51,7 @@ node_hint() {
   fi
 }
 
-PACKAGE=${BENCHAGI_PACKAGE:-github:BenchAGI/bench-cli}
+PACKAGE=${BENCHAGI_PACKAGE:-https://github.com/BenchAGI/bench-cli/archive/refs/heads/main.tar.gz}
 
 step 'Detecting operating system'
 OS_NAME=$(uname -s 2>/dev/null || printf '%s' unknown)
