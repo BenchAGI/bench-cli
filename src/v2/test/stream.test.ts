@@ -8,15 +8,18 @@ import type { AgentEventPayload } from "../protocol/types.js";
 
 type Capture = {
   lines: string[];
+  raw: string[];
   restore: () => void;
 };
 
 function captureStdout(): Capture {
   const orig = process.stdout.write.bind(process.stdout);
   const lines: string[] = [];
+  const rawChunks: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stdout as { write: unknown }).write = ((data: string | Uint8Array): boolean => {
     const str = typeof data === "string" ? data : data.toString();
+    rawChunks.push(str);
     for (const line of str.split("\n")) {
       if (line.length > 0) lines.push(line);
     }
@@ -24,6 +27,7 @@ function captureStdout(): Capture {
   }) as never;
   return {
     lines,
+    raw: rawChunks,
     restore: () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (process.stdout as { write: unknown }).write = orig as never;
@@ -174,6 +178,78 @@ test("Renderer: assistant text is labeled once per response", () => {
   const all = cap.lines.join("");
   assert.equal((all.match(/agent> /g) ?? []).length, 1);
   assert.match(all, /agent> hello/);
+});
+
+test("Renderer: cumulative chat snapshots append only the new suffix", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderChatDelta({ state: "delta", message: { content: [{ type: "text", text: "hel" }] } });
+    r.renderChatDelta({ state: "delta", message: { content: [{ type: "text", text: "hello" }] } });
+    r.renderChatDelta({ state: "delta", message: { content: [{ type: "text", text: "hello there" }] } });
+    r.renderChatFinal({ state: "final", message: { content: [{ type: "text", text: "hello there" }] } });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("");
+  assert.equal((all.match(/agent> /g) ?? []).length, 1);
+  assert.match(all, /agent> hello there/);
+  assert.doesNotMatch(all, /helhello/);
+  assert.doesNotMatch(all, /hellohello/);
+});
+
+test("Renderer: agent assistant snapshot plus chat snapshot does not double-render", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "assistant", ts: 0,
+      data: { phase: "delta", text: "hello", delta: "hello" },
+    });
+    r.renderChatDelta({ state: "delta", message: { content: [{ type: "text", text: "hello" }] } });
+    r.renderChatFinal({ state: "final", message: { content: [{ type: "text", text: "hello" }] } });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("");
+  assert.equal((all.match(/agent> /g) ?? []).length, 1);
+  assert.match(all, /agent> hello/);
+  assert.doesNotMatch(all, /hellohello/);
+});
+
+test("Renderer: lifecycle end finishes assistant line before run ended", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderChatDelta({ state: "delta", message: { content: [{ type: "text", text: "done" }] } });
+    r.renderAgent({
+      runId: "r1", seq: 2, stream: "lifecycle", ts: 0,
+      data: { phase: "end" },
+    });
+    r.renderChatFinal({ state: "final", message: { content: [{ type: "text", text: "done" }] } });
+  } finally { cap.restore(); }
+  const all = cap.raw.join("");
+  assert.match(all, /agent> done\n\[run ended\]/);
+  assert.doesNotMatch(all, /done\[run ended\]/);
+  assert.doesNotMatch(all, /donedone/);
+});
+
+test("Renderer: text-only assistant event renders before lifecycle end without final duplicate", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "assistant", ts: 0,
+      data: { text: "final answer" },
+    });
+    r.renderAgent({
+      runId: "r1", seq: 2, stream: "lifecycle", ts: 0,
+      data: { phase: "end" },
+    });
+    r.renderChatFinal({
+      state: "final",
+      message: { content: [{ type: "text", text: "final answer" }] },
+    });
+  } finally { cap.restore(); }
+  const all = cap.raw.join("");
+  assert.match(all, /agent> final answer\n\[run ended\]/);
+  assert.equal((all.match(/final answer/g) ?? []).length, 1);
 });
 
 // V1.1 — Item 5: SPEC §13 "REPL: [r] toggles tool expansion for the session"
