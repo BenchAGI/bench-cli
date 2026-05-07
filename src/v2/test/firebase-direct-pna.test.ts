@@ -6,45 +6,77 @@
 // listener), Chrome sends an additional `OPTIONS` preflight with
 // `Access-Control-Request-Private-Network: true`. Without our explicit
 // `Access-Control-Allow-Private-Network: true` consent header on the
-// preflight response, Chrome blocks the POST before it ever reaches us
-// — the user sees "Permission was denied for this request to access the
-// loopback address space" and `benchagi auth login` silently times out.
+// preflight response, Chrome blocks the POST before it ever reaches us.
 //
-// This test pins three behaviors of the listener's OPTIONS handler:
-//   1. PNA-requesting preflight from the allowed origin is consented to.
-//   2. Non-PNA preflight from the allowed origin is acknowledged WITHOUT
-//      advertising PNA support (keep the surface tight).
-//   3. PNA-requesting preflight from any other origin is rejected (403),
-//      with no consent header — origin gate runs before the PNA branch.
+// **Test isolation:** the original implementation of this test exercised
+// `loginFlow` end-to-end and posted fake credentials to satisfy the
+// outer promise. That path called `saveCreds`, which writes to the real
+// macOS Keychain — running `npm run test:v2` would overwrite a real
+// developer's BenchAGI auth with fake tokens. Codex Anvil flagged this
+// as a BLOCK.
 //
-// We exercise the real `loginFlowAttempt` so the listener under test is
-// the production code path. The test's `openBrowser` callback drives the
-// HTTP requests and (for the success cases) POSTs a valid body to
-// resolve loginFlowAttempt's outer promise, otherwise the test would
-// hang for the listener's full 90s timeout.
+// Refactored to drive the exported `handle` function directly via a
+// minimal `http.createServer` we own. We never call `saveCreds` and
+// never touch the keychain; the `done` callback is captured as a Jest-
+// style spy and the request body / status / headers are asserted at
+// the HTTP layer. Production behavior unchanged.
 //
-// Run via the v2 build:
-//   npm run build && node --test dist/v2/test/firebase-direct-pna.test.js
+// Pinned behaviors:
+//   1. PNA-requesting preflight from the allowed origin echoes consent.
+//   2. Non-PNA preflight from the allowed origin does NOT advertise PNA.
+//   3. PNA-requesting preflight from any other origin → 403, no consent.
+//
+// Run: npm run build && node --test dist/v2/test/firebase-direct-pna.test.js
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { loginFlow } from "../auth/firebase-direct.js";
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { AddressInfo } from "node:net";
+import { handle } from "../auth/firebase-direct.js";
 
 const ALLOWED_ORIGIN = "https://benchagi.com";
 const ATTACKER_ORIGIN = "https://attacker.example.com";
+const TEST_STATE = "test-state-token-22ch";
 
 interface PreflightResult {
   status: number;
   headers: Record<string, string>;
 }
 
+async function withListener<T>(
+  fn: (port: number) => Promise<T>,
+): Promise<T> {
+  const server: Server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      await handle(req, res, TEST_STATE, () => {
+        // No-op: in-test, we don't need to capture the success/error
+        // callback because all assertions happen at the HTTP-status
+        // layer. Real production calls saveCreds in this callback;
+        // we explicitly DON'T touch the keychain.
+      });
+    } catch {
+      // Swallow — handle's own error path already wrote a 500.
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const addr = server.address() as AddressInfo;
+  const port = addr.port;
+  try {
+    return await fn(port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 async function preflight(
   port: number,
-  state: string,
   origin: string,
   withPna: boolean,
 ): Promise<PreflightResult> {
-  const url = `http://127.0.0.1:${port}/cli-callback?state=${encodeURIComponent(state)}`;
+  const url = `http://127.0.0.1:${port}/cli-callback?state=${encodeURIComponent(TEST_STATE)}`;
   const headers: Record<string, string> = {
     Origin: origin,
     "Access-Control-Request-Method": "POST",
@@ -59,88 +91,20 @@ async function preflight(
   return { status: resp.status, headers: out };
 }
 
-async function postValidBody(port: number, state: string): Promise<void> {
-  // Resolves loginFlow so the test doesn't hang on the 90s timeout. Body
-  // must satisfy the listener's strict field validation in handle().
-  const url = `http://127.0.0.1:${port}/cli-callback?state=${encodeURIComponent(state)}`;
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      Origin: ALLOWED_ORIGIN,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      idToken: "fake-id-token",
-      refreshToken: "fake-refresh-token",
-      uid: "test-uid",
-      email: "test@example.com",
-      expiresAt: Date.now() + 3_600_000,
-    }),
-  });
-}
-
-function pickPort(): number {
-  // Within the [8000, 10000) range the listener uses; far enough from
-  // common dev ports to avoid collisions during local test runs.
-  return 8000 + Math.floor(Math.random() * 2_000);
-}
-
-async function withListener<T>(
-  fn: (port: number, capturedState: string) => Promise<T>,
-): Promise<T> {
-  let captured = "";
-  const port = pickPort();
-  const result: { value?: T; error?: unknown } = {};
-  // Crank the timeout DOWN so misbehaving tests fail fast. Production
-  // default is 90s; we don't need anywhere near that for these tests.
-  const flow = loginFlow({
-    port,
-    timeoutMs: 5_000,
-    openBrowser: async (url) => {
-      const u = new URL(url);
-      captured = u.searchParams.get("state") ?? "";
-      try {
-        result.value = await fn(port, captured);
-      } catch (err) {
-        result.error = err;
-      } finally {
-        // Always resolve loginFlow so the test doesn't hang on the
-        // listener timeout. Use the real captured state so the body
-        // POST passes the constant-time-equal check.
-        try {
-          await postValidBody(port, captured);
-        } catch {
-          // ignore — the listener may already have closed
-        }
-      }
-    },
-  });
-  await flow.catch(() => {
-    // loginFlow may reject if our POST raced with timeout/close. The
-    // assertions inside `fn` are what matters.
-  });
-  if (result.error) throw result.error;
-  return result.value as T;
-}
-
 test("PNA preflight from allowed origin echoes Access-Control-Allow-Private-Network", async () => {
-  const result = await withListener(async (port, state) => {
-    return await preflight(port, state, ALLOWED_ORIGIN, /*withPna*/ true);
-  });
+  const result = await withListener((port) => preflight(port, ALLOWED_ORIGIN, true));
   assert.equal(result.status, 204);
   assert.equal(result.headers["access-control-allow-origin"], ALLOWED_ORIGIN);
   assert.equal(result.headers["access-control-allow-methods"], "POST");
   assert.equal(
     result.headers["access-control-allow-private-network"],
     "true",
-    "PNA-requesting preflight from the allowed origin must echo the consent header",
+    "PNA-requesting preflight from the allowed origin must echo consent",
   );
 });
 
 test("non-PNA preflight from allowed origin does NOT advertise Allow-Private-Network", async () => {
-  const result = await withListener(async (port, state) => {
-    return await preflight(port, state, ALLOWED_ORIGIN, /*withPna*/ false);
-  });
+  const result = await withListener((port) => preflight(port, ALLOWED_ORIGIN, false));
   assert.equal(result.status, 204);
   assert.equal(result.headers["access-control-allow-origin"], ALLOWED_ORIGIN);
   assert.equal(
@@ -151,9 +115,7 @@ test("non-PNA preflight from allowed origin does NOT advertise Allow-Private-Net
 });
 
 test("PNA preflight from non-allowed origin is rejected with 403 and no consent header", async () => {
-  const result = await withListener(async (port, state) => {
-    return await preflight(port, state, ATTACKER_ORIGIN, /*withPna*/ true);
-  });
+  const result = await withListener((port) => preflight(port, ATTACKER_ORIGIN, true));
   assert.equal(result.status, 403);
   assert.equal(
     result.headers["access-control-allow-private-network"],

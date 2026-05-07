@@ -144,7 +144,15 @@ type CallbackResult =
   | { kind: "ok"; creds: FirebaseCreds }
   | { kind: "err"; error: string };
 
-async function handle(
+/**
+ * The HTTP request handler for the cli-callback listener. Exported so
+ * the PNA preflight regression test can exercise it directly without
+ * spinning up the full `loginFlow` (which would call `saveCreds` and
+ * write fake tokens to the real macOS Keychain — Codex Anvil flagged
+ * this as a BLOCK on the original test). Production use stays through
+ * `loginFlow` → `loginFlowAttempt` → `handle`.
+ */
+export async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   expectedState: string,
