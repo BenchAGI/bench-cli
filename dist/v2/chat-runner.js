@@ -21,10 +21,13 @@ export class ChatRunner {
     approval;
     sessionKey = null;
     currentRunId = null;
+    activeRunIds = new Set();
+    completedRuns = new Map();
     connected = false;
     livenessThresholdMs = 5_000;
     finalWaiter = null;
     renderedRunStart = new Set();
+    verbosePatchUnavailable = false;
     // Highest transport-frame seq observed per session, for chat.history
     // replay on reconnect (V1.1 — Item 1).
     lastSeenFrameSeq = new Map();
@@ -91,19 +94,32 @@ export class ChatRunner {
         });
         this.liveness.start();
         this.router = new EventRouter({
-            onChatDelta: (payload) => this.renderer.renderChatDelta(payload),
-            onChatFinal: (payload) => {
+            onChatDelta: (payload, runId) => {
+                if (!this.shouldAcceptRunId(runId))
+                    return;
+                this.renderer.renderChatDelta(payload);
+            },
+            onChatFinal: (payload, runId) => {
+                if (!this.shouldAcceptRunId(runId))
+                    return;
                 this.renderer.renderChatFinal(payload);
                 const state = payload?.state;
                 if (state === "final")
-                    this.completeRun("final");
+                    this.completeRun("final", runId);
                 if (state === "aborted")
-                    this.completeRun("aborted");
+                    this.completeRun("aborted", runId);
                 if (state === "error")
-                    this.completeRun("error");
+                    this.completeRun("error", runId);
             },
-            onChatSideResult: (payload) => this.renderer.renderChatSideResult(payload),
+            onChatSideResult: (payload) => {
+                const runId = resolveFrameRunId({ event: "chat.side_result", payload });
+                if (!this.shouldAcceptRunId(runId))
+                    return;
+                this.renderer.renderChatSideResult(payload);
+            },
             onAgent: (ap) => {
+                if (!this.shouldAcceptRunId(ap.runId))
+                    return;
                 // chat-event style (state-based) detection for batch backends
                 // that emit chat events directly.
                 if (ap.stream === "lifecycle") {
@@ -119,7 +135,6 @@ export class ChatRunner {
                     }
                     if (phase === "end" || phase === "ended" || phase === "complete" || phase === "completed") {
                         this.renderer.renderAgent(ap);
-                        this.completeRun("final");
                         return;
                     }
                 }
@@ -243,6 +258,9 @@ export class ChatRunner {
     async eventLoop() {
         try {
             for await (const frame of this.transport.events()) {
+                if (!this.shouldDispatchFrame(frame)) {
+                    continue;
+                }
                 // Record the highest transport-frame seq we've seen so a
                 // post-reconnect chat.history call can resume from there
                 // (V1.1 — Item 1).
@@ -288,45 +306,74 @@ export class ChatRunner {
         });
         void appendFile(this.traceFramesPath, `${line}\n`).catch(() => { });
     }
-    async waitForFinal(timeoutMs) {
+    async waitForFinal(timeoutMs, runId) {
+        if (runId) {
+            const alreadyCompleted = this.completedRuns.get(runId);
+            if (alreadyCompleted)
+                return alreadyCompleted;
+        }
         return await new Promise((resolve) => {
             const timer = setTimeout(() => {
                 this.finalWaiter = null;
                 resolve("timeout");
             }, timeoutMs);
-            this.finalWaiter = (reason) => {
-                clearTimeout(timer);
-                this.finalWaiter = null;
-                resolve(reason);
+            this.finalWaiter = {
+                runId,
+                resolve: (reason) => {
+                    clearTimeout(timer);
+                    this.finalWaiter = null;
+                    resolve(reason);
+                },
             };
         });
     }
-    completeRun(reason) {
+    completeRun(reason, runId) {
+        const completedRunId = runId ?? this.currentRunId ?? undefined;
+        if (completedRunId) {
+            this.activeRunIds.delete(completedRunId);
+            this.completedRuns.set(completedRunId, reason);
+            while (this.completedRuns.size > 64) {
+                const oldest = this.completedRuns.keys().next().value;
+                if (typeof oldest !== "string")
+                    break;
+                this.completedRuns.delete(oldest);
+            }
+            if (this.currentRunId === completedRunId) {
+                this.currentRunId = this.activeRunIds.values().next().value ?? null;
+            }
+        }
         // V1.1 — Item 2: hide the liveness indicator between REPL turns.
-        if (this.liveness)
+        if (this.liveness && this.activeRunIds.size === 0)
             this.liveness.setInFlight(false);
-        if (this.finalWaiter) {
+        if (this.finalWaiter &&
+            (!this.finalWaiter.runId || !completedRunId || this.finalWaiter.runId === completedRunId)) {
             const w = this.finalWaiter;
             this.finalWaiter = null;
-            w(reason);
+            w.resolve(reason);
         }
     }
     async sendMessage(message) {
         if (!this.connected)
             throw new Error("not connected");
-        // Ensure session with verboseLevel=full.
+        if (this.activeRunIds.size > 0) {
+            const run = this.currentRunId ? ` ${this.currentRunId.slice(0, 8)}` : "";
+            eprintln(c.yellow(`turn${run} is still in flight — Ctrl-C to abort before sending another`));
+            return null;
+        }
         if (!this.sessionKey) {
             await this.ensureSession();
         }
         else {
-            await this.transport
-                .request("sessions.patch", { key: this.sessionKey, verboseLevel: "full" })
-                .catch(() => { });
+            await this.ensureVerboseEvents();
         }
         const idempotencyKey = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
         const firebaseIdToken = await loadFreshFirebaseIdToken();
+        this.currentRunId = idempotencyKey;
+        this.activeRunIds.add(idempotencyKey);
+        this.completedRuns.delete(idempotencyKey);
+        this.liveness.recordLifecycleStart();
         try {
-            await this.transport.request("chat.send", {
+            const resp = await this.transport.request("chat.send", {
                 sessionKey: this.sessionKey,
                 message,
                 idempotencyKey,
@@ -335,8 +382,19 @@ export class ChatRunner {
                     ? { cloudAuth: { firebaseIdToken } }
                     : {}),
             });
+            const acceptedRunId = extractRunId(resp) ?? idempotencyKey;
+            if (acceptedRunId !== idempotencyKey) {
+                this.activeRunIds.delete(idempotencyKey);
+                this.activeRunIds.add(acceptedRunId);
+                this.currentRunId = acceptedRunId;
+            }
+            return acceptedRunId;
         }
         catch (err) {
+            this.activeRunIds.delete(idempotencyKey);
+            this.currentRunId = this.activeRunIds.values().next().value ?? null;
+            if (this.activeRunIds.size === 0)
+                this.liveness.setInFlight(false);
             // TODO(V1.1 follow-up — Codex Anvil P1): chat.send acceptance race.
             // If the gateway ACK was lost mid-flight but the run was actually
             // accepted, the user sees "chat.send failed" while history later
@@ -345,6 +403,7 @@ export class ChatRunner {
             // chat.history/sessions.list to confirm acceptance before failing
             // the user-visible send.
             eprintln(c.red(`chat.send failed: ${err instanceof Error ? err.message : String(err)}`));
+            return null;
         }
     }
     async abortCurrent() {
@@ -403,6 +462,7 @@ export class ChatRunner {
             return "denied";
         }
         await this.abortCurrent();
+        this.completeRun("aborted", this.currentRunId ?? undefined);
         return "aborted";
     }
     async close() {
@@ -431,10 +491,21 @@ export class ChatRunner {
         else {
             this.sessionKey = `agent:${this.opts.agentId}`;
         }
-        // Now assert full verboseLevel; tolerate older gateways gracefully.
-        await this.transport
-            .request("sessions.patch", { key: this.sessionKey, verboseLevel: "full" })
-            .catch(() => { });
+        await this.ensureVerboseEvents();
+    }
+    async ensureVerboseEvents() {
+        if (!this.sessionKey || this.verbosePatchUnavailable)
+            return;
+        try {
+            await this.transport.request("sessions.patch", { key: this.sessionKey, verboseLevel: "full" });
+        }
+        catch (err) {
+            this.verbosePatchUnavailable = true;
+            const message = err instanceof Error ? err.message : String(err);
+            if (!/missing scope: operator\.admin/i.test(message)) {
+                eprintln(c.dim(`verbose event upgrade unavailable: ${message}`));
+            }
+        }
     }
     async resolveApproval(action) {
         const method = action.kind === "exec" ? "exec.approval.resolve" : "plugin.approval.resolve";
@@ -447,6 +518,17 @@ export class ChatRunner {
         catch (err) {
             eprintln(c.red(`approval ${action.decision} failed: ${err instanceof Error ? err.message : String(err)}`));
         }
+    }
+    shouldDispatchFrame(frame) {
+        return shouldDispatchFrameForActiveRun(frame, {
+            sessionKey: this.sessionKey,
+            activeRunIds: this.activeRunIds,
+        });
+    }
+    shouldAcceptRunId(runId) {
+        if (!runId)
+            return true;
+        return this.activeRunIds.has(runId);
     }
 }
 export function passLine(line) {
@@ -472,4 +554,58 @@ function extractHistoryEvents(resp) {
         return Boolean(e && typeof e === "object" && e.type === "event"
             && typeof e.event === "string");
     });
+}
+function extractRunId(resp) {
+    if (!resp || typeof resp !== "object")
+        return null;
+    const runId = resp.runId;
+    return typeof runId === "string" && runId.length > 0 ? runId : null;
+}
+export function resolveFrameSessionKey(frame) {
+    const payload = asRecord(frame.payload);
+    const topLevel = readNonEmptyString(payload?.sessionKey);
+    if (topLevel)
+        return topLevel;
+    const data = asRecord(payload?.data);
+    return readNonEmptyString(data?.sessionKey);
+}
+export function resolveFrameRunId(frame) {
+    const payload = asRecord(frame.payload);
+    const topLevel = readNonEmptyString(payload?.runId);
+    if (topLevel)
+        return topLevel;
+    const data = asRecord(payload?.data);
+    return readNonEmptyString(data?.runId);
+}
+export function shouldDispatchFrameForActiveRun(frame, args) {
+    if (frame.event === "tick" || frame.event === "shutdown")
+        return true;
+    const sessionKey = resolveFrameSessionKey(frame);
+    if (sessionKey && args.sessionKey && sessionKey !== args.sessionKey) {
+        return false;
+    }
+    const runId = resolveFrameRunId(frame);
+    if (isRunScopedFrame(frame) && runId && !args.activeRunIds.has(runId)) {
+        return false;
+    }
+    if (sessionKey) {
+        return args.sessionKey === null || sessionKey === args.sessionKey;
+    }
+    return !isSessionScopedFrame(frame);
+}
+function isRunScopedFrame(frame) {
+    return frame.event === "chat" || frame.event === "chat.side_result" ||
+        frame.event === "agent" || frame.event === "session.tool";
+}
+function isSessionScopedFrame(frame) {
+    return isRunScopedFrame(frame) || frame.event === "sessions.changed" ||
+        frame.event === "session.message";
+}
+function asRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : null;
+}
+function readNonEmptyString(value) {
+    return typeof value === "string" && value.length > 0 ? value : undefined;
 }

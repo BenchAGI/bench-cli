@@ -163,6 +163,19 @@ test("Renderer: tool result with isError:false renders the success path", () => 
   assert.doesNotMatch(all, /Read failed/);
 });
 
+test("Renderer: assistant text is labeled once per response", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  const cap = captureStdout();
+  try {
+    r.renderChatDelta({ state: "delta", delta: "hel" });
+    r.renderChatDelta({ state: "delta", delta: "lo" });
+    r.renderChatFinal({ state: "final" });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("");
+  assert.equal((all.match(/agent> /g) ?? []).length, 1);
+  assert.match(all, /agent> hello/);
+});
+
 // V1.1 — Item 5: SPEC §13 "REPL: [r] toggles tool expansion for the session"
 test("Renderer: toggleFullOutput flips the per-session expand flag", () => {
   const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);

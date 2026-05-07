@@ -73,6 +73,7 @@ export class StreamRenderer {
         if (text.length === 0)
             return;
         if (!this.currentAssistantHasContent) {
+            this.renderAssistantLabel();
             this.currentAssistantHasContent = true;
         }
         process.stdout.write(text);
@@ -83,6 +84,7 @@ export class StreamRenderer {
         const state = payload?.state;
         if (text.length > 0 && !this.currentAssistantHasContent) {
             // Batch backend delivered final-only; render whole text.
+            this.renderAssistantLabel();
             process.stdout.write(text);
         }
         if (state === "error" && errorMessage) {
@@ -132,6 +134,8 @@ export class StreamRenderer {
             const text = data.delta ?? data.text ?? "";
             if (text.length === 0)
                 return;
+            if (!this.currentAssistantHasContent)
+                this.renderAssistantLabel();
             this.currentAssistantHasContent = true;
             process.stdout.write(text);
             return;
@@ -139,11 +143,15 @@ export class StreamRenderer {
         if (data.phase === "end" || data.phase === "final") {
             const text = data.text ?? "";
             if (text.length > 0 && !this.currentAssistantHasContent) {
+                this.renderAssistantLabel();
                 process.stdout.write(text);
             }
             println();
             this.currentAssistantHasContent = false;
         }
+    }
+    renderAssistantLabel() {
+        process.stdout.write(c.magenta("agent> "));
     }
     renderThinking(p) {
         const data = p.data;

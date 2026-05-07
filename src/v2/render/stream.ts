@@ -84,6 +84,7 @@ export class StreamRenderer {
     const text = extractChatText(payload);
     if (text.length === 0) return;
     if (!this.currentAssistantHasContent) {
+      this.renderAssistantLabel();
       this.currentAssistantHasContent = true;
     }
     process.stdout.write(text);
@@ -95,6 +96,7 @@ export class StreamRenderer {
     const state = (payload as { state?: string })?.state;
     if (text.length > 0 && !this.currentAssistantHasContent) {
       // Batch backend delivered final-only; render whole text.
+      this.renderAssistantLabel();
       process.stdout.write(text);
     }
     if (state === "error" && errorMessage) {
@@ -147,6 +149,7 @@ export class StreamRenderer {
     if (data.phase === "delta" || data.delta != null) {
       const text = data.delta ?? data.text ?? "";
       if (text.length === 0) return;
+      if (!this.currentAssistantHasContent) this.renderAssistantLabel();
       this.currentAssistantHasContent = true;
       process.stdout.write(text);
       return;
@@ -154,11 +157,16 @@ export class StreamRenderer {
     if (data.phase === "end" || data.phase === "final") {
       const text = data.text ?? "";
       if (text.length > 0 && !this.currentAssistantHasContent) {
+        this.renderAssistantLabel();
         process.stdout.write(text);
       }
       println();
       this.currentAssistantHasContent = false;
     }
+  }
+
+  private renderAssistantLabel(): void {
+    process.stdout.write(c.magenta("agent> "));
   }
 
   private renderThinking(p: AgentEventPayload): void {

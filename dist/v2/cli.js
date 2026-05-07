@@ -129,10 +129,12 @@ async function locateAgent(name) {
     return { id: resolved.id, model: resolved.model };
 }
 async function singleTurn(runner, message) {
-    await runner.sendMessage(message);
+    const runId = await runner.sendMessage(message);
+    if (!runId)
+        return;
     // Wait for the run to reach a terminal chat-event state, with a generous
     // timeout for batch backends (claude-cli/openai-codex sit silent until done).
-    const reason = await runner.waitForFinal(120_000);
+    const reason = await runner.waitForFinal(120_000, runId);
     if (reason === "timeout") {
         println(c.dim("(timed out waiting for response — try the REPL: `benchagi`)"));
     }
@@ -141,11 +143,15 @@ async function singleTurn(runner, message) {
 async function replLoop(runner, agentId) {
     println(c.dim(`benchagi ${CLI_VERSION} · agent ${c.cyan(agentId)} · type /exit or Ctrl-D to quit`));
     await new Promise((resolve) => {
-        const repl = new Repl({ prompt: c.cyan("> ") }, {
+        const repl = new Repl({ prompt: c.cyan("you> ") }, {
             onMessage: async (msg) => {
-                await runner.sendMessage(msg);
-                // Allow stream to flush a bit; in real use the render is live.
-                await new Promise((r) => setTimeout(r, 200));
+                const runId = await runner.sendMessage(msg);
+                if (!runId)
+                    return;
+                const reason = await runner.waitForFinal(30 * 60_000, runId);
+                if (reason === "timeout") {
+                    println(c.dim("(still waiting after 30m — prompt restored; output may continue if the gateway finishes)"));
+                }
             },
             onInterrupt: async () => {
                 // V1.1 — Item 3: Ctrl-C during a pending approval default-
