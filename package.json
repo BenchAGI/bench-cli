@@ -23,7 +23,7 @@
     "test:v2": "node --test dist/v2/**/*.test.js",
     "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs",
     "prepublishOnly": "npm run build",
-    "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: bench setup (legacy) or benchagi (V2 streaming).')\""
+    "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: benchagi (V2 streaming) — or the legacy back-compat \\'bench setup\\' readiness check.')\""
   },
   "engines": {
     "node": ">=20.10"
@@ -40,7 +40,7 @@
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0"
   },
-  "keywords": ["bench", "benchagi", "openclaw", "agents", "cli", "ai", "streaming"],
+  "keywords": ["benchagi", "bench", "openclaw", "agents", "cli", "ai", "streaming"],
   "homepage": "https://github.com/BenchAGI/bench-cli",
   "repository": {
     "type": "git",

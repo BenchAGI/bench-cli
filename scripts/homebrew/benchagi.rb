@@ -3,19 +3,21 @@
 # Homebrew formula for the BenchAGI CLI.
 #
 # Ships TWO binaries from one package:
-#   * `bench`     — legacy v0.x wrapper around `openclaw`
-#   * `benchagi`  — V2 streaming-aware native WebSocket client
+#   * `benchagi`  — V2 streaming-aware native WebSocket client (canonical)
+#   * `bench`     — legacy v0.x wrapper around `openclaw` (deprecated alias)
 #
 # To publish a new version:
 #   1. Tag a release at https://github.com/BenchAGI/bench-cli (e.g. v1.0.0).
 #   2. Update `url`, `version`, and `sha256` here.
-#   3. Place this file at https://github.com/BenchAGI/homebrew-tap/Formula/bench.rb
-#   4. Customers install via: `brew install BenchAGI/tap/bench`
+#   3. Place this file at https://github.com/BenchAGI/homebrew-tap/Formula/benchagi.rb
+#   4. Customers install via: `brew install BenchAGI/tap/benchagi`
+#      (`brew install BenchAGI/tap/bench` remains as a deprecated alias formula
+#      that installs the identical artifact — do not install both.)
 #
 # Alternative install paths:
 #   curl -fsSL https://benchagi.com/install.sh | sh
 #   npm install -g @benchagi/cli
-class Bench < Formula
+class Benchagi < Formula
   desc "BenchAGI CLI — streaming-aware terminal access to the OpenClaw agent system"
   homepage "https://github.com/BenchAGI/bench-cli"
   url "https://github.com/BenchAGI/bench-cli/archive/refs/tags/v1.0.0.tar.gz"

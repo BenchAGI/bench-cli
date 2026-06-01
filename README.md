@@ -8,14 +8,16 @@ This package ships **two binaries** from one install:
   approvals. Two-clock liveness indicator for batch backends so silence is
   visible silence with a countdown, never a frozen process. **Use this for
   daily interactive work.**
-- **`bench`** (V1 wrapper, kept for compatibility) — thin shell-out around
-  `openclaw` for the everyday verbs `ask`, `chat`, `feed`, `tail`,
-  `commitments`, `agents`, `sessions`, `tasks`, `status`, `setup`. Use this
-  for the verbs that haven't been ported to native protocol yet.
+- **`bench`** (deprecated back-compat alias, kept working) — thin shell-out
+  around `openclaw` for the everyday verbs `ask`, `chat`, `feed`, `tail`,
+  `commitments`, `agents`, `sessions`, `tasks`, `status`, `setup`. These
+  verbs run on the `bench` alias today; native `benchagi` equivalents are
+  landing per the roadmap. New users should prefer `benchagi`.
 
-Both binaries discover agents from the same `openclaw.json`, share the
-same install URL, and live in the same npm package + Homebrew tap. Pick
-the one that fits the moment.
+`benchagi` is the canonical command going forward. `bench` continues to work
+as a deprecated alias so existing scripts and muscle memory don't break. Both
+binaries discover agents from the same `openclaw.json`, share the same install
+URL, and live in the same npm package + Homebrew tap.
 
 ## V2 (`benchagi`) at a glance
 
@@ -44,11 +46,12 @@ benchagi 1.0.0-beta.1 · agent kestrel-aurelius · type /exit or Ctrl-D to quit
 Full V2 docs: see `docs/v2/SPEC.md` and the wiki entry at
 `~/.openclaw/wiki/main/_boards/nodes/master/benchagi.md`.
 
-## V1 (`bench`) at a glance
+## V1 (`bench`, deprecated alias) at a glance
 
-`bench` is the BenchAGI command line. It gives you the everyday verbs you
-already use in Codex / Claude Code — `ask`, `chat`, `feed`, `tail` — pointed
-at your local OpenClaw agent runtime.
+`bench` is the deprecated back-compat alias. It still works and gives you the
+everyday verbs you already use in Codex / Claude Code — `ask`, `chat`, `feed`,
+`tail` — pointed at your local OpenClaw agent runtime. These verbs run on the
+`bench` alias today; native `benchagi` equivalents are landing per the roadmap.
 
 ```text
 $ bench feed
@@ -88,19 +91,20 @@ fresh machine can install directly from `main`.
 After install, run:
 
 ```bash
-bench setup
 benchagi doctor
+bench setup            # legacy readiness check (deprecated alias)
 ```
 
-`bench setup` verifies the legacy command surface and local OpenClaw readiness:
+`benchagi doctor` is the canonical post-install check. It verifies the V2
+streaming console: local Gateway protocol support, event-frame methods,
+discovered agents, and Firebase Direct identity when signed in.
+
+`bench setup` is the legacy readiness check on the deprecated `bench` alias.
+It verifies the legacy command surface and local OpenClaw readiness:
 1. `openclaw` is on your `PATH`,
 2. your local gateway is reachable,
 3. at least one agent is configured,
 4. (optional) the default agent answers a ping.
-
-`benchagi doctor` verifies the V2 streaming console: local Gateway protocol
-support, event-frame methods, discovered agents, and Firebase Direct identity
-when signed in.
 
 If something is off, `bench setup --fix` invokes `openclaw doctor --repair`
 non-interactively to apply the safe migrations.
@@ -108,11 +112,13 @@ non-interactively to apply the safe migrations.
 ### Homebrew
 
 ```bash
-brew install BenchAGI/tap/bench
+brew install BenchAGI/tap/benchagi
 ```
 
-The tap lives at <https://github.com/BenchAGI/homebrew-tap>. The formula stub
-for publishing it is in `scripts/homebrew/bench.rb`.
+The tap lives at <https://github.com/BenchAGI/homebrew-tap>. The canonical
+`benchagi` formula installs both binaries; `brew install BenchAGI/tap/bench`
+remains as a deprecated alias formula that installs the identical artifact. The
+formula stub for publishing it is in `scripts/homebrew/benchagi.rb`.
 
 ## Requirements
 
@@ -122,6 +128,9 @@ for publishing it is in `scripts/homebrew/bench.rb`.
   running local gateway
 
 ## Commands
+
+These verbs run on the `bench` alias today; native `benchagi` equivalents are
+landing per the roadmap. Until then, invoke them via `bench <verb>`.
 
 | Command | Description |
 | --- | --- |
@@ -140,6 +149,9 @@ for publishing it is in `scripts/homebrew/bench.rb`.
 Run `bench <cmd> --help` for full options.
 
 ## Examples
+
+These examples use the `bench` alias because the verbs shown run there today;
+native `benchagi` equivalents are landing per the roadmap.
 
 ```bash
 # Single turn at high reasoning.

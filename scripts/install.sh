@@ -121,20 +121,6 @@ case "$PM" in
 esac
 ok "Installed $PACKAGE"
 
-step 'Verifying bench binary'
-if ! command -v bench >/dev/null 2>&1; then
-  NPM_BIN=''
-  if command -v npm >/dev/null 2>&1; then
-    NPM_BIN=$(npm bin -g 2>/dev/null || npm prefix -g 2>/dev/null | sed 's:$:/bin:' || printf '%s' '')
-  fi
-
-  if [ -n "$NPM_BIN" ]; then
-    die "bench is not on PATH. Add npm global bin to PATH: export PATH=\"$NPM_BIN:\$PATH\""
-  fi
-  die 'bench is not on PATH. Add your npm global bin directory to PATH.'
-fi
-ok "bench is available at $(command -v bench)"
-
 step 'Verifying benchagi streaming console'
 if ! command -v benchagi >/dev/null 2>&1; then
   NPM_BIN=''
@@ -148,12 +134,28 @@ if ! command -v benchagi >/dev/null 2>&1; then
   die 'benchagi is not on PATH. Add your npm global bin directory to PATH.'
 fi
 benchagi version >/dev/null
-ok "benchagi is available at $(command -v benchagi)"
+ok "benchagi (canonical) is available at $(command -v benchagi)"
+
+step 'Verifying bench alias binary'
+if ! command -v bench >/dev/null 2>&1; then
+  NPM_BIN=''
+  if command -v npm >/dev/null 2>&1; then
+    NPM_BIN=$(npm bin -g 2>/dev/null || npm prefix -g 2>/dev/null | sed 's:$:/bin:' || printf '%s' '')
+  fi
+
+  if [ -n "$NPM_BIN" ]; then
+    die "bench is not on PATH. Add npm global bin to PATH: export PATH=\"$NPM_BIN:\$PATH\""
+  fi
+  die 'bench is not on PATH. Add your npm global bin directory to PATH.'
+fi
+ok "bench (deprecated alias) is available at $(command -v bench)"
 
 step 'Running BenchAGI setup'
+# benchagi doctor is the canonical readiness check; bench setup is the legacy
+# alias check, kept for back-compat.
 if bench setup --help >/dev/null 2>&1; then
   bench setup --non-interactive
 else
-  bench --help
+  benchagi --help
 fi
 ok 'BenchAGI CLI install completed'
