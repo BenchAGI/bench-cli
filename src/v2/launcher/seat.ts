@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { c, eprintln, println } from "../render/ansi.js";
 import { loadCreds } from "../state/keychain.js";
+import { loadAccount, type AccountUser } from "./account.js";
 import type { LauncherAgent } from "./roster.js";
 
 const SEAT_DIR = join(homedir(), ".config", "benchagi", "seats");
@@ -21,6 +22,12 @@ function resolveClaude(): string {
 
 function seatEffort(): string {
   return process.env.BENCHAGI_SEAT_EFFORT || "high";
+}
+
+function displayUser(user?: AccountUser | { email?: string; name?: string }): { email?: string; name?: string } | undefined {
+  if (!user) return undefined;
+  const name = "preferredName" in user ? (user.preferredName || user.name || user.email) : user.name;
+  return { name, email: user.email };
 }
 
 function writeAgentPrompt(agent: LauncherAgent, user?: { email?: string; name?: string }): string {
@@ -48,8 +55,8 @@ payments, deploys, or other irreversible actions.
 
 export async function runLocalSeat(agent: LauncherAgent): Promise<void> {
   const claudeBin = resolveClaude();
-  const creds = await loadCreds().catch(() => null);
-  const promptFile = writeAgentPrompt(agent, creds ? { email: creds.email } : undefined);
+  const [creds, account] = await Promise.all([loadCreds().catch(() => null), loadAccount().catch(() => null)]);
+  const promptFile = writeAgentPrompt(agent, displayUser(account?.user) ?? (creds ? { email: creds.email } : undefined));
 
   process.stdout.write("\x1b[2J\x1b[H");
   println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} — ${agent.modelShort} · local Claude Code session`);

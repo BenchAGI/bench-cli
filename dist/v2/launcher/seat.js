@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { c, eprintln, println } from "../render/ansi.js";
 import { loadCreds } from "../state/keychain.js";
+import { loadAccount } from "./account.js";
 const SEAT_DIR = join(homedir(), ".config", "benchagi", "seats");
 function resolveClaude() {
     const candidates = [join(homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"];
@@ -17,6 +18,12 @@ function resolveClaude() {
 }
 function seatEffort() {
     return process.env.BENCHAGI_SEAT_EFFORT || "high";
+}
+function displayUser(user) {
+    if (!user)
+        return undefined;
+    const name = "preferredName" in user ? (user.preferredName || user.name || user.email) : user.name;
+    return { name, email: user.email };
 }
 function writeAgentPrompt(agent, user) {
     mkdirSync(SEAT_DIR, { recursive: true });
@@ -42,8 +49,8 @@ payments, deploys, or other irreversible actions.
 }
 export async function runLocalSeat(agent) {
     const claudeBin = resolveClaude();
-    const creds = await loadCreds().catch(() => null);
-    const promptFile = writeAgentPrompt(agent, creds ? { email: creds.email } : undefined);
+    const [creds, account] = await Promise.all([loadCreds().catch(() => null), loadAccount().catch(() => null)]);
+    const promptFile = writeAgentPrompt(agent, displayUser(account?.user) ?? (creds ? { email: creds.email } : undefined));
     process.stdout.write("\x1b[2J\x1b[H");
     println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} — ${agent.modelShort} · local Claude Code session`);
     println(c.dim("  exit the session (/exit or Ctrl-D) to return to the picker"));

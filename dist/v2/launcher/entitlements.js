@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadFreshFirebaseIdToken } from "../auth/firebase-token.js";
-import { loadAccount, resolveApiBase } from "./account.js";
+import { hasAccountToken, loadAccount, resolveApiBase } from "./account.js";
 const DEFAULT_TIMEOUT = 3000;
 const CACHE_PATH = join(homedir(), ".config", "benchagi", "roster-cache.json");
 function normalize(arr) {
@@ -44,7 +44,7 @@ export async function resolveEntitledAgents(opts = {}) {
     const account = await loadAccount(env);
     const apiBase = resolveApiBase(account, env);
     const firebaseToken = await loadFreshFirebaseIdToken().catch(() => null);
-    const haveAuth = Boolean(firebaseToken || account?.token || env.BENCHAGI_API_BASE);
+    const haveAuth = Boolean(firebaseToken || hasAccountToken(account));
     if (haveAuth) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT);
@@ -54,7 +54,7 @@ export async function resolveEntitledAgents(opts = {}) {
                 headers["Authorization"] = `Bearer ${firebaseToken}`;
             else if (account?.token?.startsWith("bench_"))
                 headers["X-API-Key"] = account.token;
-            else if (account?.token)
+            else if (hasAccountToken(account))
                 headers["Authorization"] = `Bearer ${account.token}`;
             const res = await fetch(`${apiBase}/v1/cli/entitlements`, { headers, signal: controller.signal, redirect: "follow" });
             if (res.ok) {

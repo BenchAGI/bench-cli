@@ -9,7 +9,7 @@
 // boot.mjs renders colour/animation from this data at runtime. Keeping the art
 // as plain data (not pre-coloured frames) means the Infrared gradient + shimmer
 // are computed live and can never go stale against the brand palette.
-// Local-only (kestrel-aurelius perimeter).
+// Public BenchAGI brand asset; contains no private roster, memory, or tokens.
 
 // --- brand palette (design-kit/colors_and_type.css) -------------------------
 

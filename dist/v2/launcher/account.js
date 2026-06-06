@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 const DEFAULT_API_BASE = "https://app.benchagi.com/api";
 export async function loadAccount(env = process.env) {
-    if (env.BENCHAGI_API_BASE) {
+    if (env.BENCHAGI_API_BASE || env.BENCHAGI_TOKEN || env.BENCHAGI_INSTANCE_ID) {
         return {
             apiBase: env.BENCHAGI_API_BASE,
             token: env.BENCHAGI_TOKEN ?? "",
@@ -31,4 +31,7 @@ export async function loadAccount(env = process.env) {
 }
 export function resolveApiBase(account, env = process.env) {
     return String(env.BENCHAGI_API_BASE || account?.apiBase || DEFAULT_API_BASE).replace(/\/+$/, "");
+}
+export function hasAccountToken(account) {
+    return typeof account?.token === "string" && account.token.trim().length > 0;
 }

@@ -24,7 +24,7 @@ export interface Account {
 const DEFAULT_API_BASE = "https://app.benchagi.com/api";
 
 export async function loadAccount(env: NodeJS.ProcessEnv = process.env): Promise<Account | null> {
-  if (env.BENCHAGI_API_BASE) {
+  if (env.BENCHAGI_API_BASE || env.BENCHAGI_TOKEN || env.BENCHAGI_INSTANCE_ID) {
     return {
       apiBase: env.BENCHAGI_API_BASE,
       token: env.BENCHAGI_TOKEN ?? "",
@@ -48,4 +48,8 @@ export async function loadAccount(env: NodeJS.ProcessEnv = process.env): Promise
 
 export function resolveApiBase(account: Account | null, env: NodeJS.ProcessEnv = process.env): string {
   return String(env.BENCHAGI_API_BASE || account?.apiBase || DEFAULT_API_BASE).replace(/\/+$/, "");
+}
+
+export function hasAccountToken(account: Account | null): boolean {
+  return typeof account?.token === "string" && account.token.trim().length > 0;
 }

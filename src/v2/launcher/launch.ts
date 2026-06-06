@@ -9,7 +9,7 @@ import type { Liveness } from "../probe/capability.js";
 
 import { playBoot } from "./boot-bridge.js";
 import { checkForUpdate, updateBanner } from "./updates.js";
-import { loadAccount, resolveApiBase } from "./account.js";
+import { hasAccountToken, loadAccount, resolveApiBase } from "./account.js";
 import { resolveRoster } from "./roster.js";
 import { runCloudSeat } from "./cloud-seat.js";
 import { runLocalSeat } from "./seat.js";
@@ -49,6 +49,8 @@ export async function runLaunch(opts: LaunchOpts = {}): Promise<void> {
 
 async function ensureAuthed(): Promise<void> {
   if (process.env.BENCHAGI_NO_LOGIN) return;
+  const account = await loadAccount();
+  if (hasAccountToken(account)) return;
   const token = await loadFreshFirebaseIdToken().catch(() => null);
   if (token) return;
   println(c.dim("Sign in to use your company agents…"));

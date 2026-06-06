@@ -6,7 +6,7 @@ import { commandAuthLogin } from "../commands/auth.js";
 import { loadFreshFirebaseIdToken } from "../auth/firebase-token.js";
 import { playBoot } from "./boot-bridge.js";
 import { checkForUpdate, updateBanner } from "./updates.js";
-import { loadAccount, resolveApiBase } from "./account.js";
+import { hasAccountToken, loadAccount, resolveApiBase } from "./account.js";
 import { resolveRoster } from "./roster.js";
 import { runCloudSeat } from "./cloud-seat.js";
 import { runLocalSeat } from "./seat.js";
@@ -35,6 +35,9 @@ export async function runLaunch(opts = {}) {
 }
 async function ensureAuthed() {
     if (process.env.BENCHAGI_NO_LOGIN)
+        return;
+    const account = await loadAccount();
+    if (hasAccountToken(account))
         return;
     const token = await loadFreshFirebaseIdToken().catch(() => null);
     if (token)

@@ -9,7 +9,7 @@
 //   3. TTY, 256-colour only                      -> animated, xterm-256 palette
 //   4. TTY + truecolor                           -> full cinematic
 // Always restores the cursor + resets SGR on exit / SIGINT. Caps total runtime.
-// Local-only (kestrel-aurelius perimeter).
+// Public BenchAGI brand asset; contains no private roster, memory, or tokens.
 import process from "node:process";
 
 import {
