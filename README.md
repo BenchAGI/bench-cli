@@ -19,6 +19,30 @@ as a deprecated alias so existing scripts and muscle memory don't break. Both
 binaries discover agents from the same `openclaw.json`, share the same install
 URL, and live in the same npm package + Homebrew tap.
 
+## The launcher (boot + agent picker)
+
+Running `benchagi` on an interactive terminal opens the **BenchAGI launcher**: a
+boot cinematic, then a picker of the agents your account/instance is entitled to.
+
+```text
+$ benchagi                 # boot → pick an agent
+$ benchagi launch          # force the launcher
+$ benchagi --no-launch     # skip it; open the REPL with your last agent
+```
+
+- **Picker:** ↑/↓ move · **Enter = cloud** (runs on your instance's gateway,
+  consuming your company's allotment) · **`l` = local Claude Code seat** (runs on
+  your own machine/Claude auth) · `q` quit. Exit a session to return to the picker.
+- **Login:** if you're not signed in, the launcher runs `benchagi auth login`
+  (Firebase browser hand-off) first, so agents know who you are.
+- **Roster = entitlements:** the agents shown are exactly what you're provisioned
+  for (`GET /api/v1/cli/entitlements`), cached for offline; falls back to
+  `agents list` for local dev.
+- **Update-on-launch:** checks `/api/v1/cli/manifest.json` and prompts to
+  `brew upgrade` when a newer CLI is out. Silent/graceful when current or offline.
+- `--no-launch` / `BENCHAGI_NO_LAUNCH=1` keep the classic bare REPL; `benchagi
+  <message>` and non-TTY use are unchanged.
+
 ## V2 (`benchagi`) at a glance
 
 ```text

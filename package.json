@@ -17,7 +17,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "build:watch": "tsc -p tsconfig.json --watch",
     "test": "node test/smoke.mjs",
     "test:v2": "node --test dist/v2/**/*.test.js",
@@ -30,7 +30,9 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@sinclair/typebox": "^0.34.0"
+    "@sinclair/typebox": "^0.34.0",
+    "ink": "^5.0.1",
+    "react": "^18.3.1"
   },
   "optionalDependencies": {
     "keytar": "^7.9.0"
@@ -38,7 +40,8 @@
   "devDependencies": {
     "typescript": "^5.6.0",
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.0"
+    "@types/ws": "^8.5.0",
+    "@types/react": "^18.3.0"
   },
   "keywords": ["benchagi", "bench", "openclaw", "agents", "cli", "ai", "streaming"],
   "homepage": "https://github.com/BenchAGI/bench-cli",
