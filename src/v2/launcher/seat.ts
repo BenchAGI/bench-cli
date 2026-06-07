@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { c, eprintln, println } from "../render/ansi.js";
 import { loadCreds } from "../state/keychain.js";
+import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 import { loadAccount, type AccountUser } from "./account.js";
 import type { LauncherAgent } from "./roster.js";
 
@@ -88,11 +89,18 @@ payments, deploys, or other irreversible actions.
 
 export async function runLocalSeat(agent: LauncherAgent): Promise<void> {
   const claudeBin = resolveClaude();
-  const [creds, account] = await Promise.all([loadCreds().catch(() => null), loadAccount().catch(() => null)]);
-  const user: AccountUser | undefined = account?.user ?? (creds ? { email: creds.email } : undefined);
-  // Verified = a real login (Firebase keychain creds or a cloud token); an
-  // identity-only account.json (user block, no token) is a local assertion.
-  const verified = Boolean(creds || account?.token || account?.apiBase);
+  const [creds, account, profile] = await Promise.all([
+    loadCreds().catch(() => null),
+    loadAccount().catch(() => null),
+    loadUserProfile().catch(() => null),
+  ]);
+  // Prefer the server-verified profile (fetched at `benchagi auth login`); fall back
+  // to a local account.json assertion, then to the bare login email. `verified` is
+  // honest: true ONLY when a fresh server-fetched profile is present.
+  const verified = profileIsFresh(profile);
+  const user: AccountUser | undefined = verified
+    ? { name: profile!.displayName, email: profile!.email, accessLevel: profile!.accessLevel, accessColor: profile!.accessColor }
+    : (account?.user ?? (creds ? { email: creds.email } : undefined));
   const promptFile = writeAgentPrompt(agent, user, verified);
   const workspace = ensureSeatWorkspace();
 
