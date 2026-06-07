@@ -24,6 +24,23 @@ import {
   eagleSprite,
 } from "./boot-art.mjs";
 
+// The eagle is an actual picture of Aurelius — a downsampled render of the source
+// portrait, committed as RGB pixel data by generate-boot-portrait.py. Loaded
+// best-effort: if the data file is missing we fall back to the hand-drawn sprite.
+let PORTRAIT = null;
+try {
+  PORTRAIT = await import("./boot-portrait.mjs");
+} catch {
+  PORTRAIT = null;
+}
+const { PORTRAIT_W = 0, PORTRAIT_H = 0, PORTRAIT_ROWS = [] } = PORTRAIT || {};
+const PORTRAIT_AVAILABLE = Array.isArray(PORTRAIT_ROWS) && PORTRAIT_ROWS.length > 0;
+
+// Mono fallback ramp (light -> dense); matches scripts/generate-aurelius-ascii.py.
+const MONO_RAMP = " .,:;irsXA253hMHGS#9B&@";
+const PORTRAIT_MAX_COLS = 56; // never upscale past the committed master either
+const PORTRAIT_MIN_COLS = 24; // below this the portrait is too small to read -> compact frame
+
 // --- colour helpers ---------------------------------------------------------
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -58,9 +75,10 @@ const reset = (mode) => (mode === "mono" ? "" : "\x1b[0m");
 
 // --- capability detection ---------------------------------------------------
 
-export function detectCaps({ env = process.env, isTTY, columns, fast, motion } = {}) {
+export function detectCaps({ env = process.env, isTTY, columns, rows, fast, motion } = {}) {
   const tty = isTTY ?? Boolean(process.stdout.isTTY);
   const cols = columns ?? (Number(env.COLUMNS) || process.stdout.columns || 80);
+  const termRows = rows ?? (Number(env.LINES) || process.stdout.rows || 24);
   const noColor = "NO_COLOR" in env;
   const motionPref = motion ?? env.BENCH_BOOT_MOTION ?? "auto";
   const truecolor = /truecolor|24bit/i.test(env.COLORTERM || "");
@@ -73,7 +91,71 @@ export function detectCaps({ env = process.env, isTTY, columns, fast, motion } =
   const animate =
     tty && mode !== "mono" && !fast && motionPref !== "off" && !env.CI;
 
-  return { mode, animate, columns: cols, tty };
+  return { mode, animate, columns: cols, rows: termRows, tty };
+}
+
+// --- eagle portrait (real picture of Aurelius) ------------------------------
+
+function portraitPixel(x, y) {
+  const row = PORTRAIT_ROWS[y];
+  if (!row) return null;
+  const cell = row.slice(x * 6, x * 6 + 6);
+  if (cell.length < 6 || cell === "......") return null;
+  return [parseInt(cell.slice(0, 2), 16), parseInt(cell.slice(2, 4), 16), parseInt(cell.slice(4, 6), 16)];
+}
+
+const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+// Pick the on-screen pixel width: fit the terminal width, and fit the height
+// whenever rows are known (the cinematic clears + paints from home, so it must
+// not overflow), never upscaling past the committed master. May return a value
+// below PORTRAIT_MIN_COLS (even 0) on a short terminal — callers then drop to the
+// compact frame rather than overflow. (NB: assemble's non-eagle chrome is ~10
+// lines and each output line packs 2px of the square portrait, so eagle lines =
+// w/2; reserving 11 keeps total = w/2 + 10 within `rows`.)
+function portraitTargetWidth({ columns, rows }) {
+  let w = Math.min(PORTRAIT_W, PORTRAIT_MAX_COLS, Math.max(0, columns - 2));
+  if (rows) w = Math.min(w, 2 * Math.max(0, rows - 11));
+  return w;
+}
+
+// Will the portrait actually fit (and read) at this terminal size?
+function portraitFits(columns, rows) {
+  return PORTRAIT_AVAILABLE && portraitTargetWidth({ columns, rows }) >= PORTRAIT_MIN_COLS;
+}
+
+// Render the portrait with half-blocks (truecolor/256) or a luminance ramp (mono).
+// Returns { lines, width } so the caller can centre it.
+function eaglePortraitBlock({ mode, columns, rows, bright = 1 }) {
+  const targetW = portraitTargetWidth({ columns, rows });
+  let targetH = Math.round((PORTRAIT_H * targetW) / PORTRAIT_W);
+  if (targetH % 2) targetH += 1; // even so every output line pairs two pixels
+  const sx = (x) => Math.min(PORTRAIT_W - 1, Math.floor((x * PORTRAIT_W) / targetW));
+  const sy = (y) => Math.min(PORTRAIT_H - 1, Math.floor((y * PORTRAIT_H) / targetH));
+  const shade = (rgb) => (bright >= 1 ? rgb : mix(BRAND.ink0, rgb, bright));
+
+  const lines = [];
+  for (let y = 0; y < targetH; y += 2) {
+    let line = "";
+    for (let x = 0; x < targetW; x += 1) {
+      const tc = portraitPixel(sx(x), sy(y));
+      const bc = portraitPixel(sx(x), sy(y + 1));
+      if (mode === "mono") {
+        const present = [tc, bc].filter(Boolean);
+        if (!present.length) { line += " "; continue; }
+        const L = present.reduce((s, p) => s + luma(p), 0) / present.length;
+        const idx = Math.min(MONO_RAMP.length - 1, Math.max(0, Math.round((L * (MONO_RAMP.length - 1)) / 255)));
+        line += MONO_RAMP[idx];
+        continue;
+      }
+      if (tc && bc) line += `${fg(shade(tc), mode)}${bg(shade(bc), mode)}▀${reset(mode)}`;
+      else if (tc) line += `${fg(shade(tc), mode)}▀${reset(mode)}`;
+      else if (bc) line += `${fg(shade(bc), mode)}▄${reset(mode)}`;
+      else line += " ";
+    }
+    lines.push(line);
+  }
+  return { lines, width: targetW };
 }
 
 // --- wordmark grid ----------------------------------------------------------
@@ -161,6 +243,7 @@ function padFor(width, columns) {
 function assemble({
   mode,
   columns,
+  rows,
   eagleBright = 1,
   sprite = eagleSprite(),
   reveal = Infinity,
@@ -168,7 +251,18 @@ function assemble({
   taglineChars = TAGLINE.length,
 }) {
   const { width: wmWidth } = wordmarkGrid();
-  const eagleW = sprite[0].length;
+
+  // Prefer the real Aurelius portrait; fall back to the hand-drawn sprite.
+  let eagleRaw = null;
+  let eagleW;
+  if (PORTRAIT_AVAILABLE) {
+    const block = eaglePortraitBlock({ mode, columns, rows, bright: eagleBright });
+    eagleRaw = block.lines;
+    eagleW = block.width;
+  } else {
+    eagleW = sprite[0].length;
+  }
+
   const canvasW = Math.max(eagleW, wmWidth, TAGLINE.length);
   const canvasPad = padFor(canvasW, columns); // centre the whole canvas once
   const within = (w) => " ".repeat(Math.max(0, Math.floor((canvasW - w) / 2)));
@@ -176,9 +270,13 @@ function assemble({
   const wPad = canvasPad + within(wmWidth);
   const tPad = canvasPad + within(TAGLINE.length);
 
+  const eagleBlock = PORTRAIT_AVAILABLE
+    ? eagleRaw.map((line) => ePad + line)
+    : eagleLines({ mode, bright: eagleBright, sprite, pad: ePad });
+
   return [
     "",
-    ...eagleLines({ mode, bright: eagleBright, sprite, pad: ePad }),
+    ...eagleBlock,
     "",
     ...wordmarkLines({ mode, reveal, band, pad: wPad }),
     "",
@@ -194,9 +292,14 @@ function compactFrame({ mode, columns }) {
   return [`${pad}${color}${WORDMARK}${reset(mode)}`, `${padFor(TAGLINE.length, columns)}${taglineLine({ mode, pad: "" })}`];
 }
 
-export function renderStaticFrame({ mode = "mono", columns = 80 } = {}) {
+export function renderStaticFrame({ mode = "mono", columns = 80, rows } = {}) {
   if (columns < 44) return compactFrame({ mode, columns }).join("\n");
-  return assemble({ mode, columns }).join("\n");
+  // When rows are known and too short for even a minimal portrait, drop to compact
+  // rather than dump a tall frame. (Rows unknown — e.g. piped — renders full size.)
+  if (PORTRAIT_AVAILABLE && rows && !portraitFits(columns, rows)) {
+    return compactFrame({ mode, columns }).join("\n");
+  }
+  return assemble({ mode, columns, rows }).join("\n");
 }
 
 // --- animation --------------------------------------------------------------
@@ -209,11 +312,11 @@ function paint(lines) {
 
 export async function runBoot(opts = {}) {
   const caps = detectCaps(opts);
-  const { mode, animate, columns } = caps;
+  const { mode, animate, columns, rows } = caps;
 
   // Paths 1 & 2: static frame (mono has zero escape bytes).
   if (!animate) {
-    const frame = renderStaticFrame({ mode, columns });
+    const frame = renderStaticFrame({ mode, columns, rows });
     if (opts.write !== false) process.stdout.write(frame + "\n");
     return frame;
   }
@@ -221,6 +324,14 @@ export async function runBoot(opts = {}) {
   // Narrow colour terminals still animate poorly; show the compact frame.
   if (columns < 44) {
     const frame = compactFrame({ mode, columns }).join("\n");
+    process.stdout.write(frame + "\n");
+    return frame;
+  }
+
+  // Too few rows for the cinematic to fit — the animation paints from cursor-home,
+  // so an overflowing frame would scroll-smear. Print one static (compact) frame.
+  if (PORTRAIT_AVAILABLE && !portraitFits(columns, rows)) {
+    const frame = renderStaticFrame({ mode, columns, rows });
     process.stdout.write(frame + "\n");
     return frame;
   }
@@ -245,7 +356,7 @@ export async function runBoot(opts = {}) {
     // Stage A — eagle fades in (brightness ramp), wordmark + tagline hidden.
     for (let i = 0; i < 5; i += 1) {
       const bright = 0.25 + (i / 4) * 0.75;
-      paint(assemble({ mode, columns, eagleBright: bright, reveal: -1, taglineChars: 0 }));
+      paint(assemble({ mode, columns, rows, eagleBright: bright, reveal: -1, taglineChars: 0 }));
       await sleep(55);
     }
 
@@ -255,28 +366,34 @@ export async function runBoot(opts = {}) {
       const p = i / (N - 1);
       const reveal = p * (wmWidth + 4);
       const band = p * (wmWidth + SHIMMER_BAND) - SHIMMER_BAND;
-      paint(assemble({ mode, columns, reveal, band, taglineChars: 0 }));
+      paint(assemble({ mode, columns, rows, reveal, band, taglineChars: 0 }));
       await sleep(45);
     }
 
     // Stage C — shimmer exits, tagline types in.
     for (let i = 0; i < TAGLINE.length; i += 1) {
       const band = wmWidth + SHIMMER_BAND + i; // off the right edge, fades out
-      paint(assemble({ mode, columns, band: band < wmWidth + SHIMMER_BAND * 2 ? band : null, taglineChars: i + 1 }));
+      paint(assemble({ mode, columns, rows, band: band < wmWidth + SHIMMER_BAND * 2 ? band : null, taglineChars: i + 1 }));
       await sleep(14);
     }
 
-    // Stage D — one slow blink, then settle on the full frame.
-    paint(assemble({ mode, columns, sprite: eagleBlink() }));
-    await sleep(120);
-    paint(assemble({ mode, columns }));
-    await sleep(60);
+    // Stage D — settle on the full frame. The hand-drawn sprite gets one slow
+    // blink; the photographic portrait just holds (a still photo doesn't blink).
+    if (PORTRAIT_AVAILABLE) {
+      paint(assemble({ mode, columns, rows }));
+      await sleep(180);
+    } else {
+      paint(assemble({ mode, columns, rows, sprite: eagleBlink() }));
+      await sleep(120);
+      paint(assemble({ mode, columns, rows }));
+      await sleep(60);
+    }
   } finally {
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
     cleanup();
   }
-  return assemble({ mode, columns }).join("\n");
+  return assemble({ mode, columns, rows }).join("\n");
 }
 
 // --- CLI --------------------------------------------------------------------
