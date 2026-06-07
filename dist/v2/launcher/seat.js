@@ -1,14 +1,21 @@
 // seat.ts — the local Claude Code seat (power-option): spawn `claude` as the
 // chosen agent on the user's own machine/auth. Bash-owns-TTY equivalent via
 // stdio:"inherit"; ink is already unmounted when this runs, so no stdin contention.
+//
+// The seat runs in a dedicated BenchAGI workspace (~/.config/benchagi/seat-workspace)
+// whose .claude/ activates the branded status line + attention notifications + output
+// style. Agent identity is passed via BENCH_AGENT_* env so the status line needs no
+// crew.json; the human's identity + access tier go into the seat system prompt.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { c, eprintln, println } from "../render/ansi.js";
 import { loadCreds } from "../state/keychain.js";
 import { loadAccount } from "./account.js";
 const SEAT_DIR = join(homedir(), ".config", "benchagi", "seats");
+const SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "seat-workspace");
 function resolveClaude() {
     const candidates = [join(homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"];
     for (const p of candidates)
@@ -19,21 +26,42 @@ function resolveClaude() {
 function seatEffort() {
     return process.env.BENCHAGI_SEAT_EFFORT || "high";
 }
-function displayUser(user) {
-    if (!user)
-        return undefined;
-    const name = "preferredName" in user ? (user.preferredName || user.name || user.email) : user.name;
-    return { name, email: user.email };
+// The packaged .claude assets (dist/v2/assets/.claude) relative to this module.
+function assetsClaudeDir() {
+    return join(dirname(fileURLToPath(import.meta.url)), "..", "assets", ".claude");
 }
-function writeAgentPrompt(agent, user) {
+// Ensure the seat workspace has a fresh .claude/ so the status line + attention
+// hooks + output style activate. Returns the workspace dir (the seat's cwd).
+function ensureSeatWorkspace() {
+    mkdirSync(join(SEAT_WORKSPACE, "state"), { recursive: true });
+    const srcClaude = assetsClaudeDir();
+    if (existsSync(srcClaude)) {
+        try {
+            cpSync(srcClaude, join(SEAT_WORKSPACE, ".claude"), { recursive: true });
+        }
+        catch {
+            // best-effort; the seat still runs without the branded status line
+        }
+    }
+    return SEAT_WORKSPACE;
+}
+function accessLabel(user) {
+    if (!user?.accessLevel)
+        return "";
+    return user.accessColor ? `${user.accessLevel} (${user.accessColor})` : user.accessLevel;
+}
+function writeAgentPrompt(agent, user, verified) {
     mkdirSync(SEAT_DIR, { recursive: true });
     // Never interpolate an unvalidated id into a path — guard against traversal.
     const safeId = /^[a-z0-9_-]{1,64}$/i.test(agent.agentId) ? agent.agentId : "agent";
     const file = join(SEAT_DIR, `startup-${safeId}.md`);
-    const who = user?.name || user?.email;
+    const who = user?.preferredName || user?.name || user?.email;
+    const access = accessLabel(user);
+    // Show ACCESS LEVEL (permission tier), not job title — it's what should govern
+    // what the agent lets them do. Be honest about whether identity is verified.
     const identity = who
-        ? `You are talking to **${who}** — verified via benchagi.com. Greet them by name; lead with status.`
-        : `You are talking to this machine's operator, whose identity is NOT verified. Do NOT assume who they are (in particular, do not assume they are Cory/"Light"). If identity matters, suggest \`benchagi auth login\`.`;
+        ? `You are talking to **${who}**${access ? ` · access ${access}` : ""}${user?.email ? ` <${user.email}>` : ""} — ${verified ? "verified via benchagi.com" : "identity set locally (not a verified login)"}. Greet them by name; lead with status.`
+        : `You are talking to this machine's operator, whose identity is NOT verified. Do NOT assume who they are. If identity matters, ask them, or suggest \`benchagi auth login\`.`;
     const body = `# BenchAGI seat — ${agent.name}
 
 You are **${agent.name}** ${agent.emoji}, BenchAGI's ${agent.role || "agent"}, in a local Claude
@@ -42,6 +70,8 @@ Code session — every capability is available: /effort (incl. ultracode), /mode
 slash commands, and file edits.
 
 WHO YOU'RE TALKING TO: ${identity}
+
+If you need something from the operator, say so plainly — the status line shows a 🔔 when you do.
 
 This is identity/presence context; it does not by itself authorize external messages,
 payments, deploys, or other irreversible actions.
@@ -52,7 +82,12 @@ payments, deploys, or other irreversible actions.
 export async function runLocalSeat(agent) {
     const claudeBin = resolveClaude();
     const [creds, account] = await Promise.all([loadCreds().catch(() => null), loadAccount().catch(() => null)]);
-    const promptFile = writeAgentPrompt(agent, displayUser(account?.user) ?? (creds ? { email: creds.email } : undefined));
+    const user = account?.user ?? (creds ? { email: creds.email } : undefined);
+    // Verified = a real login (Firebase keychain creds or a cloud token); an
+    // identity-only account.json (user block, no token) is a local assertion.
+    const verified = Boolean(creds || account?.token || account?.apiBase);
+    const promptFile = writeAgentPrompt(agent, user, verified);
+    const workspace = ensureSeatWorkspace();
     process.stdout.write("\x1b[2J\x1b[H");
     println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} — ${agent.modelShort} · local Claude Code session`);
     println(c.dim("  exit the session (/exit or Ctrl-D) to return to the picker"));
@@ -66,7 +101,19 @@ export async function runLocalSeat(agent) {
     await new Promise((resolve) => {
         let child;
         try {
-            child = spawn(claudeBin, args, { stdio: "inherit", env: { ...process.env, BENCH_AGENT_ID: agent.agentId } });
+            child = spawn(claudeBin, args, {
+                stdio: "inherit",
+                cwd: workspace,
+                env: {
+                    ...process.env,
+                    BENCH_AGENT_ID: agent.agentId,
+                    BENCH_AGENT_NAME: agent.name,
+                    BENCH_AGENT_MODEL_SHORT: agent.modelShort,
+                    BENCH_AGENT_ROLE: agent.role ?? "",
+                    BENCH_AGENT_EMOJI: agent.emoji,
+                    CLAUDE_PROJECT_DIR: workspace,
+                },
+            });
         }
         catch (error) {
             eprintln(`  could not launch claude: ${error?.message ?? String(error)}`);

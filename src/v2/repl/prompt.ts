@@ -7,6 +7,12 @@ import { c, println } from "../render/ansi.js";
 export type ReplOptions = {
   prompt?: string;
   promptContinuation?: string;
+  /**
+   * Optional status line rendered above the prompt on each turn (e.g. the
+   * BenchAGI seat identity + a 🔔 when the agent needs the operator). Called
+   * synchronously at prompt time; return "" to render nothing.
+   */
+  statusLine?: () => string;
 };
 
 export type ReplCallbacks = {
@@ -30,11 +36,13 @@ export class Repl {
   private buffer: string[] = [];
   private prompt: string;
   private promptContinuation: string;
+  private statusLine?: () => string;
   private busy = false;
 
   constructor(opts: ReplOptions, private cb: ReplCallbacks) {
     this.prompt = opts.prompt ?? c.cyan("> ");
     this.promptContinuation = opts.promptContinuation ?? c.dim("… ");
+    this.statusLine = opts.statusLine;
     this.rl = createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -124,6 +132,14 @@ export class Repl {
   }
 
   private showPrompt(): void {
+    if (this.statusLine) {
+      try {
+        const s = this.statusLine();
+        if (s) println(s);
+      } catch {
+        // a status-line error must never break the REPL
+      }
+    }
     this.rl.setPrompt(this.prompt);
     this.rl.prompt();
   }

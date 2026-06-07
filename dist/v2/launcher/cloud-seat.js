@@ -8,6 +8,21 @@ import { Repl } from "../repl/prompt.js";
 import { listAgents, resolveShortName } from "../commands/agents.js";
 import { loadState, recordRecent } from "../state/state-file.js";
 import { CLI_VERSION } from "../commands/version.js";
+import { loadAccount } from "./account.js";
+// Branded ANSI for the cloud REPL status line (matches the local seat status line).
+const IR = "\x1b[38;2;255;45;85m";
+const COPPER = "\x1b[38;2;196;122;58m";
+const AMBER = "\x1b[38;2;255;184;74m";
+const SDIM = "\x1b[38;2;124;124;135m";
+const SRESET = "\x1b[0m";
+const MODEL_SHORT = {
+    "claude-opus-4-8": "Opus 4.8",
+    "claude-opus-4-6": "Opus 4.6",
+    "claude-sonnet-4-6": "Sonnet 4.6",
+    "claude-haiku-4-5": "Haiku 4.5",
+};
+const shortModel = (m) => (m ? (MODEL_SHORT[m] ?? m) : "");
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 export async function locateAgent(name) {
     const agents = await listAgents();
     if (agents.length === 0) {
@@ -38,10 +53,27 @@ export async function singleTurn(runner, message) {
     }
     println();
 }
-export async function replLoop(runner, agentId) {
-    println(c.dim(`benchagi ${CLI_VERSION} · agent ${c.cyan(agentId)} · type /exit or Ctrl-D to quit`));
+export async function replLoop(runner, agentId, model) {
+    // Status line above the prompt each turn: the agent you're talking to, the
+    // logged-in human + access tier, and a 🔔 when the agent is waiting on you.
+    const account = await loadAccount().catch(() => null);
+    const user = account?.user;
+    const who = user?.preferredName || user?.name || user?.email;
+    const access = user?.accessLevel ? (user.accessColor ? `${user.accessLevel} (${user.accessColor})` : user.accessLevel) : "";
+    const ms = shortModel(model);
+    const statusLine = () => {
+        const parts = [`🦅 ${IR}${cap(agentId)}${SRESET}`];
+        if (ms)
+            parts.push(`${COPPER}${ms}${SRESET}`);
+        if (who)
+            parts.push(`${SDIM}you: ${who}${access ? ` · ${access}` : ""}${SRESET}`);
+        parts.push(`${SDIM}cloud · benchagi${SRESET}`);
+        const line = parts.join(`${SDIM} · ${SRESET}`);
+        return runner.hasPendingApproval() ? `${AMBER}\x1b[1m🔔 needs you${SRESET}${SDIM}  ·  ${SRESET}${line}` : line;
+    };
+    println(c.dim(`benchagi ${CLI_VERSION} · type /exit or Ctrl-D to quit`));
     await new Promise((resolve) => {
-        const repl = new Repl({ prompt: c.cyan("you> ") }, {
+        const repl = new Repl({ prompt: c.cyan("you> "), statusLine }, {
             onMessage: async (msg) => {
                 const runId = await runner.sendMessage(msg);
                 if (!runId)
@@ -84,7 +116,7 @@ export async function runCloudSeat(agentId, opts = {}) {
             await singleTurn(runner, opts.message);
         }
         else {
-            await replLoop(runner, agent.id);
+            await replLoop(runner, agent.id, agent.model);
         }
     }
     finally {

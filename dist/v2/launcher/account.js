@@ -20,7 +20,9 @@ export async function loadAccount(env = process.env) {
     for (const p of candidates) {
         try {
             const acct = JSON.parse(await readFile(p, "utf8"));
-            if (acct?.apiBase || acct?.token)
+            // Accept a cloud account (apiBase/token) OR an identity-only account (a "user"
+            // block — a local "who am I" assertion before/without login).
+            if (acct?.apiBase || acct?.token || acct?.user)
                 return acct;
         }
         catch {

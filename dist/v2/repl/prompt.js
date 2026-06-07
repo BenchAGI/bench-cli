@@ -9,11 +9,13 @@ export class Repl {
     buffer = [];
     prompt;
     promptContinuation;
+    statusLine;
     busy = false;
     constructor(opts, cb) {
         this.cb = cb;
         this.prompt = opts.prompt ?? c.cyan("> ");
         this.promptContinuation = opts.promptContinuation ?? c.dim("… ");
+        this.statusLine = opts.statusLine;
         this.rl = createInterface({
             input: process.stdin,
             output: process.stdout,
@@ -97,6 +99,16 @@ export class Repl {
         }
     }
     showPrompt() {
+        if (this.statusLine) {
+            try {
+                const s = this.statusLine();
+                if (s)
+                    println(s);
+            }
+            catch {
+                // a status-line error must never break the REPL
+            }
+        }
         this.rl.setPrompt(this.prompt);
         this.rl.prompt();
     }
