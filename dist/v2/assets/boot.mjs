@@ -24,6 +24,23 @@ import {
   eagleSprite,
 } from "./boot-art.mjs";
 
+// The eagle is an actual picture of Aurelius — a downsampled render of the source
+// portrait, committed as RGB pixel data by generate-boot-portrait.py. Loaded
+// best-effort: if the data file is missing we fall back to the hand-drawn sprite.
+let PORTRAIT = null;
+try {
+  PORTRAIT = await import("./boot-portrait.mjs");
+} catch {
+  PORTRAIT = null;
+}
+const { PORTRAIT_W = 0, PORTRAIT_H = 0, PORTRAIT_ROWS = [] } = PORTRAIT || {};
+const PORTRAIT_AVAILABLE = Array.isArray(PORTRAIT_ROWS) && PORTRAIT_ROWS.length > 0;
+
+// Mono fallback ramp (light -> dense); matches scripts/generate-aurelius-ascii.py.
+const MONO_RAMP = " .,:;irsXA253hMHGS#9B&@";
+const PORTRAIT_MAX_COLS = 64; // cap at the sprite's native size (1:1 when the terminal fits)
+const PORTRAIT_MIN_COLS = 24; // below this the portrait is too small to read -> compact frame
+
 // --- colour helpers ---------------------------------------------------------
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -58,9 +75,11 @@ const reset = (mode) => (mode === "mono" ? "" : "\x1b[0m");
 
 // --- capability detection ---------------------------------------------------
 
-export function detectCaps({ env = process.env, isTTY, columns, fast, motion } = {}) {
+export function detectCaps({ env = process.env, isTTY, columns, rows, fast, motion } = {}) {
   const tty = isTTY ?? Boolean(process.stdout.isTTY);
   const cols = columns ?? (Number(env.COLUMNS) || process.stdout.columns || 80);
+  // Non-TTY (piped/CI) has no live screen to overflow, so don't height-clamp it.
+  const termRows = rows ?? (tty ? (Number(env.LINES) || process.stdout.rows || 24) : Infinity);
   const noColor = "NO_COLOR" in env;
   const motionPref = motion ?? env.BENCH_BOOT_MOTION ?? "auto";
   const truecolor = /truecolor|24bit/i.test(env.COLORTERM || "");
@@ -73,7 +92,95 @@ export function detectCaps({ env = process.env, isTTY, columns, fast, motion } =
   const animate =
     tty && mode !== "mono" && !fast && motionPref !== "off" && !env.CI;
 
-  return { mode, animate, columns: cols, tty };
+  // "Blocky" render: paint each pixel as a background-coloured cell instead of a
+  // half-block glyph. Half-blocks (▀▄) don't tile vertically in Apple Terminal —
+  // they leave black scan-line gaps. Background colour fills the whole cell, so
+  // there's nothing to gap. Auto-on for Apple_Terminal; forceable via env.
+  const blocky =
+    env.BENCH_BOOT_BLOCKS === "1" ||
+    (env.BENCH_BOOT_BLOCKS !== "0" && /Apple_Terminal/i.test(env.TERM_PROGRAM || ""));
+
+  return { mode, animate, columns: cols, rows: termRows, blocky, tty };
+}
+
+// --- eagle portrait (real picture of Aurelius) ------------------------------
+
+function portraitPixel(x, y) {
+  const row = PORTRAIT_ROWS[y];
+  if (!row) return null;
+  const cell = row.slice(x * 6, x * 6 + 6);
+  if (cell.length < 6 || cell === "......") return null;
+  return [parseInt(cell.slice(0, 2), 16), parseInt(cell.slice(2, 4), 16), parseInt(cell.slice(4, 6), 16)];
+}
+
+const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+// Clean integer downscales of the committed master (64 -> 64 or the smaller 32).
+// Pixel art only looks right at integer scales, so we SNAP to one of these rather
+// than an arbitrary fit (64->56 looks janky). The smaller 32 is used whenever the
+// full 64 can't cleanly fit — e.g. blocky mode (2 cols/px) on most terminals.
+const SPRITE_SIZES = [PORTRAIT_W, Math.round(PORTRAIT_W / 2)]; // [64, 32]
+const snapPx = (maxW) => SPRITE_SIZES.find((s) => s <= maxW) || 0;
+
+// Both modes use the SAME footprint: wpx cols wide, wpx/2 lines tall (each line is a
+// vertical pixel-pair). Blocky just paints those cells with background colour instead
+// of a half-block glyph, so it fits wherever the half-block render fit.
+function portraitTargetPx({ columns, rows }) {
+  const colsAvail = Math.max(0, columns - 2);
+  const lineBudget = rows ? Math.max(0, rows - 11) : Infinity;
+  const maxByW = Math.min(PORTRAIT_MAX_COLS, colsAvail);
+  const maxByH = 2 * lineBudget; // output lines = wpx/2
+  return snapPx(Math.min(PORTRAIT_W, maxByW, maxByH));
+}
+
+// Will the portrait fit at a clean size (64 or 32)? If not, callers use compact.
+function portraitFits(columns, rows) {
+  return PORTRAIT_AVAILABLE && portraitTargetPx({ columns, rows }) > 0;
+}
+
+// Render the portrait. Truecolor/256: half-blocks (crisp, 2 distinct px/cell) OR —
+// when the terminal can't tile half-blocks (Apple_Terminal) — background-coloured
+// cells (gap-proof; the vertical pixel-pair is merged to one colour, same footprint).
+// Mono: a luminance ramp. Returns { lines, width } so the caller can centre it.
+function eaglePortraitBlock({ mode, columns, rows, blocky, bright = 1 }) {
+  const wpx = portraitTargetPx({ columns, rows });
+  const shade = (rgb) => (bright >= 1 ? rgb : mix(BRAND.ink0, rgb, bright));
+  const avg = (ps) => [0, 1, 2].map((i) => Math.round(ps.reduce((s, p) => s + p[i], 0) / ps.length));
+  let targetH = Math.round((PORTRAIT_H * wpx) / PORTRAIT_W);
+  if (targetH % 2) targetH += 1; // even so every output line pairs two pixels
+  const sx = (x) => Math.min(PORTRAIT_W - 1, Math.floor((x * PORTRAIT_W) / wpx));
+  const sy = (y) => Math.min(PORTRAIT_H - 1, Math.floor((y * PORTRAIT_H) / targetH));
+
+  const lines = [];
+  for (let y = 0; y < targetH; y += 2) {
+    let line = "";
+    for (let x = 0; x < wpx; x += 1) {
+      const tc = portraitPixel(sx(x), sy(y));
+      const bc = portraitPixel(sx(x), sy(y + 1));
+      if (mode === "mono") {
+        const present = [tc, bc].filter(Boolean);
+        if (!present.length) { line += " "; continue; }
+        const L = present.reduce((s, p) => s + luma(p), 0) / present.length;
+        const idx = Math.min(MONO_RAMP.length - 1, Math.max(0, Math.round((L * (MONO_RAMP.length - 1)) / 255)));
+        line += MONO_RAMP[idx];
+        continue;
+      }
+      if (blocky) {
+        // Gap-proof: one background-coloured cell (no glyph). Merge the vertical
+        // pixel-pair into a single colour so the footprint matches the half-block render.
+        const present = [tc, bc].filter(Boolean);
+        if (!present.length) { line += " "; continue; }
+        line += `${bg(shade(avg(present)), mode)} ${reset(mode)}`;
+        continue;
+      }
+      if (tc && bc) line += `${fg(shade(tc), mode)}${bg(shade(bc), mode)}▀${reset(mode)}`;
+      else if (tc) line += `${fg(shade(tc), mode)}▀${reset(mode)}`;
+      else if (bc) line += `${fg(shade(bc), mode)}▄${reset(mode)}`;
+      else line += " ";
+    }
+    lines.push(line);
+  }
+  return { lines, width: wpx };
 }
 
 // --- wordmark grid ----------------------------------------------------------
@@ -128,7 +235,7 @@ function eagleLines({ mode, bright = 1, sprite = eagleSprite(), pad = "" }) {
   return lines;
 }
 
-function wordmarkLines({ mode, reveal = Infinity, band = null, pad = "" }) {
+function wordmarkLines({ mode, reveal = Infinity, band = null, pad = "", blocky = false }) {
   const { rows, width } = wordmarkGrid();
   return rows.map((row) => {
     let line = pad;
@@ -142,7 +249,9 @@ function wordmarkLines({ mode, reveal = Infinity, band = null, pad = "" }) {
         const d = Math.abs(x - band) / SHIMMER_BAND;
         if (d < 1) color = mix(color, BRAND.chalk, (1 - d) * 0.6);
       }
-      line += `${fg(color, mode)}█${reset(mode)}`;
+      // Blocky terminals (Apple_Terminal) gap full-block glyphs vertically too —
+      // paint a background-coloured cell instead so the wordmark stays solid.
+      line += blocky ? `${bg(color, mode)} ${reset(mode)}` : `${fg(color, mode)}█${reset(mode)}`;
     }
     return line;
   });
@@ -161,6 +270,8 @@ function padFor(width, columns) {
 function assemble({
   mode,
   columns,
+  rows,
+  blocky = false,
   eagleBright = 1,
   sprite = eagleSprite(),
   reveal = Infinity,
@@ -168,7 +279,18 @@ function assemble({
   taglineChars = TAGLINE.length,
 }) {
   const { width: wmWidth } = wordmarkGrid();
-  const eagleW = sprite[0].length;
+
+  // Prefer the real Aurelius portrait; fall back to the hand-drawn sprite.
+  let eagleRaw = null;
+  let eagleW;
+  if (PORTRAIT_AVAILABLE) {
+    const block = eaglePortraitBlock({ mode, columns, rows, blocky, bright: eagleBright });
+    eagleRaw = block.lines;
+    eagleW = block.width;
+  } else {
+    eagleW = sprite[0].length;
+  }
+
   const canvasW = Math.max(eagleW, wmWidth, TAGLINE.length);
   const canvasPad = padFor(canvasW, columns); // centre the whole canvas once
   const within = (w) => " ".repeat(Math.max(0, Math.floor((canvasW - w) / 2)));
@@ -176,11 +298,15 @@ function assemble({
   const wPad = canvasPad + within(wmWidth);
   const tPad = canvasPad + within(TAGLINE.length);
 
+  const eagleBlock = PORTRAIT_AVAILABLE
+    ? eagleRaw.map((line) => ePad + line)
+    : eagleLines({ mode, bright: eagleBright, sprite, pad: ePad });
+
   return [
     "",
-    ...eagleLines({ mode, bright: eagleBright, sprite, pad: ePad }),
+    ...eagleBlock,
     "",
-    ...wordmarkLines({ mode, reveal, band, pad: wPad }),
+    ...wordmarkLines({ mode, reveal, band, pad: wPad, blocky }),
     "",
     taglineLine({ mode, chars: taglineChars, pad: tPad }),
     "",
@@ -194,9 +320,14 @@ function compactFrame({ mode, columns }) {
   return [`${pad}${color}${WORDMARK}${reset(mode)}`, `${padFor(TAGLINE.length, columns)}${taglineLine({ mode, pad: "" })}`];
 }
 
-export function renderStaticFrame({ mode = "mono", columns = 80 } = {}) {
+export function renderStaticFrame({ mode = "mono", columns = 80, rows, blocky = false } = {}) {
   if (columns < 44) return compactFrame({ mode, columns }).join("\n");
-  return assemble({ mode, columns }).join("\n");
+  // When rows are known and too short for even a minimal portrait, drop to compact
+  // rather than dump a tall frame. (Rows unknown — e.g. piped — renders full size.)
+  if (PORTRAIT_AVAILABLE && rows && !portraitFits(columns, rows)) {
+    return compactFrame({ mode, columns }).join("\n");
+  }
+  return assemble({ mode, columns, rows, blocky }).join("\n");
 }
 
 // --- animation --------------------------------------------------------------
@@ -209,11 +340,11 @@ function paint(lines) {
 
 export async function runBoot(opts = {}) {
   const caps = detectCaps(opts);
-  const { mode, animate, columns } = caps;
+  const { mode, animate, columns, rows, blocky } = caps;
 
   // Paths 1 & 2: static frame (mono has zero escape bytes).
   if (!animate) {
-    const frame = renderStaticFrame({ mode, columns });
+    const frame = renderStaticFrame({ mode, columns, rows, blocky });
     if (opts.write !== false) process.stdout.write(frame + "\n");
     return frame;
   }
@@ -221,6 +352,14 @@ export async function runBoot(opts = {}) {
   // Narrow colour terminals still animate poorly; show the compact frame.
   if (columns < 44) {
     const frame = compactFrame({ mode, columns }).join("\n");
+    process.stdout.write(frame + "\n");
+    return frame;
+  }
+
+  // Too few rows for the cinematic to fit — the animation paints from cursor-home,
+  // so an overflowing frame would scroll-smear. Print one static (compact) frame.
+  if (PORTRAIT_AVAILABLE && !portraitFits(columns, rows)) {
+    const frame = renderStaticFrame({ mode, columns, rows, blocky });
     process.stdout.write(frame + "\n");
     return frame;
   }
@@ -245,7 +384,7 @@ export async function runBoot(opts = {}) {
     // Stage A — eagle fades in (brightness ramp), wordmark + tagline hidden.
     for (let i = 0; i < 5; i += 1) {
       const bright = 0.25 + (i / 4) * 0.75;
-      paint(assemble({ mode, columns, eagleBright: bright, reveal: -1, taglineChars: 0 }));
+      paint(assemble({ mode, columns, rows, eagleBright: bright, reveal: -1, taglineChars: 0 }));
       await sleep(55);
     }
 
@@ -255,28 +394,34 @@ export async function runBoot(opts = {}) {
       const p = i / (N - 1);
       const reveal = p * (wmWidth + 4);
       const band = p * (wmWidth + SHIMMER_BAND) - SHIMMER_BAND;
-      paint(assemble({ mode, columns, reveal, band, taglineChars: 0 }));
+      paint(assemble({ mode, columns, rows, reveal, band, taglineChars: 0 }));
       await sleep(45);
     }
 
     // Stage C — shimmer exits, tagline types in.
     for (let i = 0; i < TAGLINE.length; i += 1) {
       const band = wmWidth + SHIMMER_BAND + i; // off the right edge, fades out
-      paint(assemble({ mode, columns, band: band < wmWidth + SHIMMER_BAND * 2 ? band : null, taglineChars: i + 1 }));
+      paint(assemble({ mode, columns, rows, band: band < wmWidth + SHIMMER_BAND * 2 ? band : null, taglineChars: i + 1 }));
       await sleep(14);
     }
 
-    // Stage D — one slow blink, then settle on the full frame.
-    paint(assemble({ mode, columns, sprite: eagleBlink() }));
-    await sleep(120);
-    paint(assemble({ mode, columns }));
-    await sleep(60);
+    // Stage D — settle on the full frame. The hand-drawn sprite gets one slow
+    // blink; the photographic portrait just holds (a still photo doesn't blink).
+    if (PORTRAIT_AVAILABLE) {
+      paint(assemble({ mode, columns, rows }));
+      await sleep(180);
+    } else {
+      paint(assemble({ mode, columns, rows, sprite: eagleBlink() }));
+      await sleep(120);
+      paint(assemble({ mode, columns, rows }));
+      await sleep(60);
+    }
   } finally {
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
     cleanup();
   }
-  return assemble({ mode, columns }).join("\n");
+  return assemble({ mode, columns, rows }).join("\n");
 }
 
 // --- CLI --------------------------------------------------------------------
