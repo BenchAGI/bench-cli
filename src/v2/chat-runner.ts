@@ -481,6 +481,11 @@ export class ChatRunner {
     return false;
   }
 
+  /** True when the agent is waiting on the operator (a pending approval). */
+  hasPendingApproval(): boolean {
+    return Boolean(this.approval?.isPending());
+  }
+
   /**
    * Route a single keystroke from the REPL.
    *

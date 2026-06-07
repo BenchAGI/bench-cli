@@ -1,0 +1,16 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node \"$CLAUDE_PROJECT_DIR/.claude/statusline/benchagi-statusline.mjs\"",
+    "padding": 0
+  },
+  "outputStyle": "BenchAGI",
+  "hooks": {
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" hook-notification" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" clear" } ] }
+    ]
+  }
+}

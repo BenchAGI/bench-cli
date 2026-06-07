@@ -12,6 +12,10 @@ export interface AccountUser {
   email?: string;
   role?: string;
   uid?: string;
+  // Permission tier shown in the seat identity (governs what the agent allows),
+  // e.g. accessLevel "Epic", accessColor "Purple".
+  accessLevel?: string;
+  accessColor?: string;
 }
 
 export interface Account {
@@ -38,7 +42,9 @@ export async function loadAccount(env: NodeJS.ProcessEnv = process.env): Promise
   for (const p of candidates) {
     try {
       const acct = JSON.parse(await readFile(p, "utf8")) as Account;
-      if (acct?.apiBase || acct?.token) return acct;
+      // Accept a cloud account (apiBase/token) OR an identity-only account (a "user"
+      // block — a local "who am I" assertion before/without login).
+      if (acct?.apiBase || acct?.token || acct?.user) return acct;
     } catch {
       // missing/invalid → try next
     }

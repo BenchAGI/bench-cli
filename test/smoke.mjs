@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 import { parseArgs } from "../src/lib/args.mjs";
 import { extractJson, cleanStderr } from "../src/lib/openclaw.mjs";
@@ -174,6 +175,48 @@ await test("install.sh verifies both bench binaries", () => {
   assert.match(text, /command -v benchagi/);
 });
 
+// --- BenchAGI seat: status line + attention notifications (the new feature) ---
+const ASSETS = path.resolve(__dirname, "../dist/v2/assets/.claude");
+
+await test("seat .claude assets are shipped in dist", () => {
+  for (const f of [
+    "settings.json",
+    "statusline/benchagi-statusline.mjs",
+    "hooks/benchagi-attention.mjs",
+    "output-styles/benchagi.md",
+  ]) {
+    assert.ok(existsSync(path.join(ASSETS, f)), `missing dist asset: ${f}`);
+  }
+});
+
+await test("status line renders the agent identity from BENCH_AGENT_* env", async () => {
+  const { stdout } = await runScript(path.join(ASSETS, "statusline/benchagi-statusline.mjs"), [], {
+    env: { BENCH_AGENT_NAME: "Aurelius", BENCH_AGENT_EMOJI: "🦅", BENCH_AGENT_MODEL_SHORT: "Opus 4.8", BENCH_AGENT_ROLE: "coo" },
+    input: "{}",
+  });
+  const plain = stdout.replace(/\x1b\[[0-9;]*m/g, "");
+  assert.match(plain, /Aurelius/);
+  assert.match(plain, /Opus 4\.8/);
+  assert.match(plain, /benchagi/);
+});
+
+await test("attention set→render→clear surfaces a notification then removes it", async () => {
+  const ws = mkdtempSync(path.join(tmpdir(), "benchagi-seat-"));
+  try {
+    const hook = path.join(ASSETS, "hooks/benchagi-attention.mjs");
+    const sl = path.join(ASSETS, "statusline/benchagi-statusline.mjs");
+    const env = { CLAUDE_PROJECT_DIR: ws, BENCH_AGENT_NAME: "Aurelius", BENCH_AGENT_EMOJI: "🦅", BENCH_AGENT_MODEL_SHORT: "Opus 4.8" };
+    await runScript(hook, ["set", "Approve the deploy?", "needs-input"], { env, input: "" });
+    const set = (await runScript(sl, [], { env, input: "{}" })).stdout.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(set, /Approve the deploy\?/, "expected the attention message in the status line");
+    await runScript(hook, ["clear"], { env, input: "{}" });
+    const cleared = (await runScript(sl, [], { env, input: "{}" })).stdout.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.doesNotMatch(cleared, /Approve the deploy\?/, "expected the attention cleared");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
 
@@ -185,5 +228,20 @@ function runBench(args) {
     child.stdout.on("data", (b) => (stdout += b.toString("utf8")));
     child.stderr.on("data", (b) => (stderr += b.toString("utf8")));
     child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
+function runScript(scriptPath, args, { env = {}, input = "" } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn("node", [scriptPath, ...args], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (b) => (stdout += b.toString("utf8")));
+    child.stderr.on("data", (b) => (stderr += b.toString("utf8")));
+    child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    child.stdin.end(input);
   });
 }
