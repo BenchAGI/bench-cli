@@ -10,6 +10,7 @@ import { listAgents, resolveShortName } from "../commands/agents.js";
 import { loadState, recordRecent } from "../state/state-file.js";
 import { CLI_VERSION } from "../commands/version.js";
 import { loadAccount } from "./account.js";
+import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 import type { Liveness } from "../probe/capability.js";
 
 export type AgentLite = { id: string; model?: string };
@@ -63,10 +64,18 @@ export async function singleTurn(runner: ChatRunner, message: string): Promise<v
 export async function replLoop(runner: ChatRunner, agentId: string, model?: string): Promise<void> {
   // Status line above the prompt each turn: the agent you're talking to, the
   // logged-in human + access tier, and a 🔔 when the agent is waiting on you.
-  const account = await loadAccount().catch(() => null);
-  const user = account?.user;
-  const who = user?.preferredName || user?.name || user?.email;
-  const access = user?.accessLevel ? (user.accessColor ? `${user.accessLevel} (${user.accessColor})` : user.accessLevel) : "";
+  const [account, profile] = await Promise.all([loadAccount().catch(() => null), loadUserProfile().catch(() => null)]);
+  // Prefer the server-verified profile; fall back to a local account.json assertion.
+  let who: string | undefined;
+  let access = "";
+  if (profileIsFresh(profile) && profile) {
+    who = profile.displayName || profile.email;
+    access = profile.accessLevel ? (profile.accessColor ? `${profile.accessLevel} (${profile.accessColor})` : profile.accessLevel) : "";
+  } else if (account?.user) {
+    const a = account.user;
+    who = a.preferredName || a.name || a.email;
+    access = a.accessLevel ? (a.accessColor ? `${a.accessLevel} (${a.accessColor})` : a.accessLevel) : "";
+  }
   const ms = shortModel(model);
   const statusLine = (): string => {
     const parts = [`🦅 ${IR}${cap(agentId)}${SRESET}`];
