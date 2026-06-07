@@ -1,13 +1,13 @@
 // `benchagi` main dispatch.
 
-import { c, ensureCursorRestoredOnExit, eprintln, println } from "./render/ansi.js";
-import { commandAgentsList, commandAgentsUse, listAgents, resolveShortName } from "./commands/agents.js";
+import { ensureCursorRestoredOnExit, eprintln, println } from "./render/ansi.js";
+import { commandAgentsList, commandAgentsUse } from "./commands/agents.js";
 import { commandAuthLogin, commandAuthLogout, commandAuthStatus } from "./commands/auth.js";
 import { commandDoctor } from "./commands/doctor.js";
 import { commandVersion, CLI_VERSION } from "./commands/version.js";
-import { ChatRunner } from "./chat-runner.js";
-import { Repl } from "./repl/prompt.js";
-import { getProjectAgent, loadState, recordRecent } from "./state/state-file.js";
+import { getProjectAgent, loadState } from "./state/state-file.js";
+import { runCloudSeat } from "./launcher/cloud-seat.js";
+import { runLaunch } from "./launcher/launch.js";
 import type { Liveness } from "./probe/capability.js";
 
 type Argv = {
@@ -47,32 +47,41 @@ export async function run(argv: string[]): Promise<void> {
       await runAgents(parsed.positional);
       return;
 
-    default: {
-      // Bare command (REPL) or single-turn (`benchagi <message...>`).
-      const agentId = await resolveAgent(parsed);
-      const agent = await locateAgent(agentId);
-      const runner = new ChatRunner({
-        agentId: agent.id,
-        modelPrimary: agent.model,
-        liveness: parsed.liveness ?? "auto",
-        showFullToolOutput: parsed.full,
-        showThinking: !parsed.noThinking,
+    case "launch":
+      await runLaunch({
+        liveness: parsed.liveness,
+        full: parsed.full,
+        noThinking: parsed.noThinking,
         traceFramesPath: parsed.traceFramesPath,
       });
-      try {
-        await runner.connect();
-        await recordRecent(agent.id);
-        if (parsed.positional.length > 0) {
-          // Single-turn ask
-          const message = parsed.positional.join(" ");
-          await singleTurn(runner, message);
-        } else {
-          // Interactive REPL
-          await replLoop(runner, agent.id);
-        }
-      } finally {
-        await runner.close();
+      return;
+
+    default: {
+      // Bare TTY with no message → the BenchAGI launcher (boot + agent picker).
+      const wantsLauncher =
+        parsed.command == null &&
+        parsed.positional.length === 0 &&
+        Boolean(process.stdin.isTTY) &&
+        Boolean(process.stdout.isTTY) &&
+        !process.env.BENCHAGI_NO_LAUNCH;
+      if (wantsLauncher) {
+        await runLaunch({
+          liveness: parsed.liveness,
+          full: parsed.full,
+          noThinking: parsed.noThinking,
+          traceFramesPath: parsed.traceFramesPath,
+        });
+        return;
       }
+      // Single-turn (`benchagi <message>`) or non-TTY → direct cloud seat / REPL.
+      const agentId = await resolveAgent(parsed);
+      await runCloudSeat(agentId, {
+        liveness: parsed.liveness,
+        full: parsed.full,
+        noThinking: parsed.noThinking,
+        traceFramesPath: parsed.traceFramesPath,
+        message: parsed.positional.length > 0 ? parsed.positional.join(" ") : undefined,
+      });
     }
   }
 }
@@ -124,86 +133,8 @@ async function resolveAgent(parsed: Argv): Promise<string | null> {
   return null;
 }
 
-type AgentLite = { id: string; model?: string };
-
-async function locateAgent(name: string | null): Promise<AgentLite> {
-  const agents = await listAgents();
-  if (agents.length === 0) {
-    throw Object.assign(
-      new Error("no agents configured; check openclaw.json agents.list"),
-      { exitCode: 5 },
-    );
-  }
-  if (!name) {
-    // Pick most recent or first.
-    const state = await loadState();
-    for (const id of state.recentAgents) {
-      const a = agents.find((a) => a.id === id);
-      if (a) return { id: a.id, model: a.model };
-    }
-    return { id: agents[0]!.id, model: agents[0]!.model };
-  }
-  const resolved = resolveShortName(name, agents);
-  if (!resolved) {
-    throw Object.assign(
-      new Error(`unknown agent: ${name} (try \`benchagi agents list\`)`),
-      { exitCode: 5 },
-    );
-  }
-  return { id: resolved.id, model: resolved.model };
-}
-
-async function singleTurn(runner: ChatRunner, message: string): Promise<void> {
-  const runId = await runner.sendMessage(message);
-  if (!runId) return;
-  // Wait for the run to reach a terminal chat-event state, with a generous
-  // timeout for batch backends (claude-cli/openai-codex sit silent until done).
-  const reason = await runner.waitForFinal(120_000, runId);
-  if (reason === "timeout") {
-    println(c.dim("(timed out waiting for response — try the REPL: `benchagi`)"));
-  }
-  println();
-}
-
-async function replLoop(runner: ChatRunner, agentId: string): Promise<void> {
-  println(c.dim(`benchagi ${CLI_VERSION} · agent ${c.cyan(agentId)} · type /exit or Ctrl-D to quit`));
-  await new Promise<void>((resolve) => {
-    const repl = new Repl(
-      { prompt: c.cyan("you> ") },
-      {
-        onMessage: async (msg) => {
-          const runId = await runner.sendMessage(msg);
-          if (!runId) return;
-          const reason = await runner.waitForFinal(30 * 60_000, runId);
-          if (reason === "timeout") {
-            println(c.dim("(still waiting after 30m — prompt restored; output may continue if the gateway finishes)"));
-          }
-        },
-        onInterrupt: async () => {
-          // V1.1 — Item 3: Ctrl-C during a pending approval default-
-          // denies that approval rather than aborting the run.
-          const reason = await runner.interruptCurrent();
-          println(c.dim(reason === "denied" ? "(approval denied)" : "(aborted)"));
-        },
-        onExit: async () => {
-          println(c.dim("bye"));
-          resolve();
-        },
-        // V1.1 — Item 3: route raw keystrokes during a busy run to
-        // the approval state machine. [A]/[D] resolve a pending
-        // approval; everything else is ignored.
-        onKey: async (key) => {
-          return await runner.handleApprovalKey(key);
-        },
-        // V1.1 — Item 3 (Codex Anvil P1): sync predicate so the
-        // REPL can clear its line buffer before the async resolve
-        // yields to the event loop.
-        canConsumeKey: (key) => runner.canHandleApprovalKey(key),
-      },
-    );
-    void repl.start();
-  });
-}
+// locateAgent / singleTurn / replLoop / runCloudSeat now live in
+// ./launcher/cloud-seat.ts (shared by the bare CLI and the launcher).
 
 function parseArgs(argv: string[]): Argv {
   const out: Argv = {
@@ -248,6 +179,7 @@ function parseArgs(argv: string[]): Argv {
     if (out.command == null && !arg.startsWith("-")) {
       // First non-flag positional is the command.
       if (
+        arg === "launch" ||
         arg === "auth" ||
         arg === "agents" ||
         arg === "doctor" ||
@@ -267,7 +199,9 @@ function printHelp(): void {
   println(`benchagi ${CLI_VERSION} — streaming-aware Bench/OpenClaw CLI
 
 Usage:
-  benchagi                         open chat REPL with last-used agent
+  benchagi                         BenchAGI launcher: boot + agent picker (TTY)
+  benchagi launch                  force the launcher (boot + picker)
+  benchagi --no-launch             open chat REPL with last-used agent (skip launcher)
   benchagi <message>               single-turn ask
   benchagi --agent <name> <msg>    address a specific agent
 

@@ -16,8 +16,10 @@
     "noEmitOnError": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
-  "include": ["src/v2/**/*.ts"],
+  "include": ["src/v2/**/*.ts", "src/v2/**/*.tsx"],
   "exclude": ["node_modules", "dist", "test", "src/cli.mjs", "src/lib", "src/commands"]
 }
