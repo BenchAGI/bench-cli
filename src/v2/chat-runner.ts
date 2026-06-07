@@ -430,7 +430,11 @@ export class ChatRunner {
         message,
         idempotencyKey,
         deliver: true,
-        ...(firebaseIdToken
+        // cloudAuth drives the bench-cloud bridge (company allotment), but its field is
+        // NOT in the v4 chat.send schema on a standard gateway (strict → rejects it).
+        // Send it only when explicitly opted in (a bridge-capable gateway); otherwise the
+        // gateway runs the agent under its own creds. Connect already authenticated the user.
+        ...(firebaseIdToken && process.env.BENCHAGI_CLOUD_BRIDGE
           ? { cloudAuth: { firebaseIdToken } }
           : {}),
       });
