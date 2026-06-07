@@ -23,6 +23,31 @@ export const c = {
   grey: (t: string) => wrap("\x1b[90m", "\x1b[39m", t),
 };
 
+// BenchAGI brand palette — single source of truth (was duplicated in cloud-seat.ts + picker.tsx).
+// Hex for ink (<Text color>); raw truecolor codes + wrappers for hand-built strings (liveness, the
+// readline status line). Wrappers respect NO_COLOR/TTY via the same `useAnsi` gate as `c`.
+export const BRAND_HEX = {
+  infrared: "#ff2d55",
+  copper: "#c47a3a",
+  amber: "#ffb84a",
+  dim: "#7c7c87",
+} as const;
+
+export const BRAND = {
+  infrared: "\x1b[38;2;255;45;85m",
+  copper: "\x1b[38;2;196;122;58m",
+  amber: "\x1b[38;2;255;184;74m",
+  dim: "\x1b[38;2;124;124;135m",
+  reset: "\x1b[0m",
+} as const;
+
+export const brand = {
+  ir: (t: string) => wrap(BRAND.infrared, "\x1b[39m", t),
+  copper: (t: string) => wrap(BRAND.copper, "\x1b[39m", t),
+  amber: (t: string) => wrap(BRAND.amber, "\x1b[39m", t),
+  sdim: (t: string) => wrap(BRAND.dim, "\x1b[39m", t),
+};
+
 // Cursor control — only effective in TTY mode.
 export const cursor = {
   hide: () => useAnsi && process.stdout.write("\x1b[?25l"),
