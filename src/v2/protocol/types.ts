@@ -4,7 +4,8 @@
 // keep this file aligned. We re-derive shapes here rather than depend on
 // the openclaw package because openclaw isn't published.
 
-export const PROTOCOL_VERSION = 3;
+// Gateway requires v4 (MIN_CLIENT_PROTOCOL_VERSION = 4): chat deltas carry `deltaText`.
+export const PROTOCOL_VERSION = 4;
 
 export const GATEWAY_CLIENT_CAPS = {
   TOOL_EVENTS: "tool-events",

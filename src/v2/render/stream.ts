@@ -425,8 +425,10 @@ function extractChatSnapshotText(payload: unknown): string {
 
 function extractChatDeltaText(payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
-  const delta = (payload as { delta?: unknown }).delta;
-  return typeof delta === "string" ? delta : "";
+  const p = payload as { deltaText?: unknown; delta?: unknown };
+  // Protocol v4 sends the incremental chunk as `deltaText`; older frames used `delta`.
+  if (typeof p.deltaText === "string") return p.deltaText;
+  return typeof p.delta === "string" ? p.delta : "";
 }
 
 function uniqueSnapshotSuffix(current: string, snapshot: string): string {
