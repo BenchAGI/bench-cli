@@ -27,7 +27,9 @@ function normalize(arr: unknown): EntitledAgent[] {
   for (const item of arr) {
     if (!item || typeof item !== "object") continue;
     const a = item as Record<string, unknown>;
-    if (typeof a.agentId !== "string") continue;
+    // Strict id charset — agentId is later used in a filesystem path (seat prompt);
+    // reject anything that could traverse. Also cleans a poisoned roster cache.
+    if (typeof a.agentId !== "string" || !/^[a-z0-9_-]{1,64}$/i.test(a.agentId)) continue;
     out.push({
       agentId: a.agentId,
       name: typeof a.name === "string" ? a.name : a.agentId,
@@ -66,7 +68,7 @@ export async function resolveEntitledAgents(opts: { timeoutMs?: number; env?: No
       else if (account?.token?.startsWith("bench_")) headers["X-API-Key"] = account.token;
       else if (hasAccountToken(account)) headers["Authorization"] = `Bearer ${account!.token}`;
 
-      const res = await fetch(`${apiBase}/v1/cli/entitlements`, { headers, signal: controller.signal, redirect: "follow" });
+      const res = await fetch(`${apiBase}/v1/cli/entitlements`, { headers, signal: controller.signal, redirect: "error" });
       if (res.ok) {
         const data = (await res.json().catch(() => null)) as { agents?: unknown; instanceId?: string } | null;
         const agents = normalize(data?.agents);

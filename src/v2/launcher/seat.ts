@@ -32,7 +32,9 @@ function displayUser(user?: AccountUser | { email?: string; name?: string }): { 
 
 function writeAgentPrompt(agent: LauncherAgent, user?: { email?: string; name?: string }): string {
   mkdirSync(SEAT_DIR, { recursive: true });
-  const file = join(SEAT_DIR, `startup-${agent.agentId}.md`);
+  // Never interpolate an unvalidated id into a path — guard against traversal.
+  const safeId = /^[a-z0-9_-]{1,64}$/i.test(agent.agentId) ? agent.agentId : "agent";
+  const file = join(SEAT_DIR, `startup-${safeId}.md`);
   const who = user?.name || user?.email;
   const identity = who
     ? `You are talking to **${who}** — verified via benchagi.com. Greet them by name; lead with status.`

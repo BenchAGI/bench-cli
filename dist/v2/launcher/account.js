@@ -30,7 +30,20 @@ export async function loadAccount(env = process.env) {
     return null;
 }
 export function resolveApiBase(account, env = process.env) {
-    return String(env.BENCHAGI_API_BASE || account?.apiBase || DEFAULT_API_BASE).replace(/\/+$/, "");
+    const raw = String(env.BENCHAGI_API_BASE || account?.apiBase || DEFAULT_API_BASE).replace(/\/+$/, "");
+    // Refuse a cleartext base — the manifest/entitlements responses drive the
+    // launcher, so an http base would let an on-path attacker substitute them.
+    // Non-https (except localhost dev) falls back to the canonical https default.
+    try {
+        const u = new URL(raw);
+        if (u.protocol !== "https:" && u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
+            return DEFAULT_API_BASE;
+        }
+        return raw;
+    }
+    catch {
+        return DEFAULT_API_BASE;
+    }
 }
 export function hasAccountToken(account) {
     return typeof account?.token === "string" && account.token.trim().length > 0;

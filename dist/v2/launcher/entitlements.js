@@ -16,7 +16,9 @@ function normalize(arr) {
         if (!item || typeof item !== "object")
             continue;
         const a = item;
-        if (typeof a.agentId !== "string")
+        // Strict id charset — agentId is later used in a filesystem path (seat prompt);
+        // reject anything that could traverse. Also cleans a poisoned roster cache.
+        if (typeof a.agentId !== "string" || !/^[a-z0-9_-]{1,64}$/i.test(a.agentId))
             continue;
         out.push({
             agentId: a.agentId,
@@ -56,7 +58,7 @@ export async function resolveEntitledAgents(opts = {}) {
                 headers["X-API-Key"] = account.token;
             else if (hasAccountToken(account))
                 headers["Authorization"] = `Bearer ${account.token}`;
-            const res = await fetch(`${apiBase}/v1/cli/entitlements`, { headers, signal: controller.signal, redirect: "follow" });
+            const res = await fetch(`${apiBase}/v1/cli/entitlements`, { headers, signal: controller.signal, redirect: "error" });
             if (res.ok) {
                 const data = (await res.json().catch(() => null));
                 const agents = normalize(data?.agents);

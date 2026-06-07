@@ -66,10 +66,16 @@ async function maybePromptUpdate(): Promise<void> {
     const banner = updateBanner(res);
     if (!banner) return;
     eprintln(c.yellow(`⬆ ${banner}`));
-    if (res.upgrade && (await confirm("  Update now? [y/N] "))) {
+    // Run a HARDCODED upgrade command (argv form, never a shell). The manifest
+    // is treated as data describing THAT an update exists — never *how* to
+    // install it. We deliberately do NOT execute the server-supplied
+    // `res.upgrade` string (that would be remote command execution).
+    eprintln(c.dim("  upgrade: brew upgrade benchagi/tap/benchagi"));
+    if (await confirm("  Update now? [y/N] ")) {
       const { spawnSync } = await import("node:child_process");
-      spawnSync(res.upgrade, { shell: true, stdio: "inherit" });
-      process.exit(0);
+      const r = spawnSync("brew", ["upgrade", "benchagi/tap/benchagi"], { stdio: "inherit" });
+      if (r.status === 0) process.exit(0);
+      eprintln(c.dim("  update did not complete; continuing with the current version"));
     }
   } catch {
     // never block launch on an update check

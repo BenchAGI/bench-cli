@@ -43,10 +43,21 @@ export async function checkForUpdate(opts: {
   if (!manifestUrl) return { available: false, reason: "no-manifest-url" };
   if (!currentVersion) return { available: false, reason: "no-current-version" };
 
+  // TLS only (except localhost dev) — the manifest must not be MITM-substitutable.
+  try {
+    const u = new URL(manifestUrl);
+    if (u.protocol !== "https:" && u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
+      return { available: false, reason: "insecure-manifest-url" };
+    }
+  } catch {
+    return { available: false, reason: "bad-manifest-url" };
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(manifestUrl, { signal: controller.signal, redirect: "follow" });
+    // redirect:"error" — a 30x must not silently re-source the manifest from another origin.
+    const res = await fetch(manifestUrl, { signal: controller.signal, redirect: "error" });
     if (!res.ok) return { available: false, reason: `http-${res.status}` };
     const m = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     const cli = (m?.cli ?? {}) as Record<string, unknown>;
