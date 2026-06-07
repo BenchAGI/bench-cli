@@ -151,6 +151,32 @@ if ! command -v bench >/dev/null 2>&1; then
 fi
 ok "bench (deprecated alias) is available at $(command -v bench)"
 
+if [ "$OS" = 'macos' ]; then
+  step 'Installing the BenchAGI Dock app (the glyph)'
+  # Locate the installed package (npm global root, else follow the benchagi symlink).
+  PKG_DIR=''
+  if command -v npm >/dev/null 2>&1; then
+    cand="$(npm root -g 2>/dev/null)/@benchagi/cli"
+    [ -d "$cand" ] && PKG_DIR="$cand"
+  fi
+  if [ -z "$PKG_DIR" ]; then
+    bin="$(command -v benchagi 2>/dev/null || true)"
+    while [ -n "$bin" ] && [ -L "$bin" ]; do
+      tgt="$(readlink "$bin")"; case "$tgt" in /*) bin="$tgt";; *) bin="$(dirname "$bin")/$tgt";; esac
+    done
+    [ -n "$bin" ] && cand="$(cd "$(dirname "$bin")/.." 2>/dev/null && pwd || true)" && [ -d "$cand/scripts" ] && PKG_DIR="$cand"
+  fi
+  if [ -n "$PKG_DIR" ] && [ -f "$PKG_DIR/scripts/make-dock-app.sh" ]; then
+    if bash "$PKG_DIR/scripts/make-dock-app.sh"; then
+      ok 'BenchAGI.app installed in ~/Applications (drag it to your Dock)'
+    else
+      warn 'Could not create the Dock app — the `benchagi` command still works.'
+    fi
+  else
+    warn 'Dock-app helper not found in the installed package — skipped (benchagi works).'
+  fi
+fi
+
 step 'Running BenchAGI setup'
 # benchagi doctor is the canonical readiness check; bench setup is the legacy
 # alias check, kept for back-compat.

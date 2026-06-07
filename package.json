@@ -1,6 +1,6 @@
 {
   "name": "@benchagi/cli",
-  "version": "1.0.0-beta.5",
+  "version": "1.0.0-beta.6",
   "description": "BenchAGI CLI — streaming-aware terminal access to the Bench/OpenClaw agent system. Includes the new `benchagi` binary (V2, native WebSocket streaming) and the legacy `bench` wrapper.",
   "type": "module",
   "bin": {
@@ -12,6 +12,9 @@
     "src/",
     "dist/",
     "scripts/install.sh",
+    "scripts/make-dock-app.sh",
+    "scripts/build-dmg.sh",
+    "assets/",
     "completions/",
     "README.md",
     "LICENSE"
