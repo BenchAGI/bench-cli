@@ -1,0 +1,222 @@
+// app.tsx — the full-screen ink cloud-chat shell. A scrolling output pane (committed lines flow into
+// native scrollback via <Static>) + a live in-progress region (streamed assistant/thinking) + the
+// 🦅 working indicator + the pinned input row + the dense pinned status bar. Renderer output reaches
+// the screen via the ansi log sink → LogStore (set up in runTui); ink owns stdout directly.
+
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Box, Static, Text, render, useApp } from "ink";
+
+import { c, setLogSink, BRAND_HEX } from "../render/ansi.js";
+import { CLI_VERSION } from "../commands/version.js";
+import type { ChatRunner } from "../chat-runner.js";
+import { parseSlash, findCommand, renderHelp, SLASH_COMMANDS } from "../repl/slash.js";
+import type { ThinkingMode } from "../render/stream.js";
+import { LogStore } from "./log-store.js";
+import { StatusBar, type HealthState } from "./status-bar.js";
+import { Working } from "./working.js";
+import { Input } from "./input.js";
+
+export type TuiProps = {
+  runner: ChatRunner;
+  store: LogStore;
+  agentId: string;
+  model?: string; // already shortened, e.g. "Opus 4.8"
+  tier?: { level: string; color?: string };
+  who?: string;
+};
+
+const POLL_MS = 250;
+
+function termCols(): number {
+  return process.stdout.columns || 80;
+}
+
+export function App(props: TuiProps): JSX.Element {
+  const { runner, store, agentId, model, tier } = props;
+  const { exit } = useApp();
+
+  // Output buffer (external store) → committed lines + live pending region.
+  useSyncExternalStore(store.subscribe, store.getVersion);
+  const { lines, pending } = store.snapshot();
+
+  // Live runtime state, polled from the runner (no event-emitter refactor needed).
+  const [busy, setBusy] = useState(false);
+  const [runId, setRunId] = useState("idle");
+  const [health, setHealth] = useState<HealthState>("ok");
+  const [healthNote, setHealthNote] = useState<string | undefined>(undefined);
+  const [approval, setApproval] = useState(false);
+  const [thinking, setThinking] = useState<ThinkingMode>(runner.getThinking());
+  const [sessionShort, setSessionShort] = useState<string | undefined>(undefined);
+  const [width, setWidth] = useState(termCols());
+
+  useEffect(() => {
+    const tick = (): void => {
+      const h = runner.healthSnapshot();
+      setBusy(runner.isInFlight());
+      setHealth(h.state);
+      setApproval(runner.hasPendingApproval());
+      setThinking(runner.getThinking());
+      const id = runner.currentRun();
+      if (id) setRunId(id);
+      setHealthNote(
+        h.state === "reconnecting"
+          ? "reconnecting…"
+          : h.state === "stuck"
+            ? "still working — Ctrl-C to abort"
+            : undefined,
+      );
+      const key = runner.resumeKey();
+      setSessionShort(key && key !== `agent:${agentId}` ? key.replace(/^agent:/, "").slice(-12) : undefined);
+    };
+    tick();
+    const t = setInterval(tick, POLL_MS);
+    return () => clearInterval(t);
+  }, [runner, agentId]);
+
+  useEffect(() => {
+    const onResize = (): void => setWidth(termCols());
+    process.stdout.on("resize", onResize);
+    return () => {
+      process.stdout.off("resize", onResize);
+    };
+  }, []);
+
+  const sendingRef = useRef(false);
+
+  const handleSubmit = (line: string): void => {
+    const parsed = parseSlash(line);
+    if (parsed) {
+      void handleSlash(parsed.name, parsed.args);
+      return;
+    }
+    store.pushLine(c.cyan(`you> ${line}`));
+    void (async () => {
+      if (sendingRef.current) return;
+      sendingRef.current = true;
+      setBusy(true);
+      try {
+        const id = await runner.sendMessage(line);
+        if (id) {
+          setRunId(id);
+          await runner.waitForFinal(30 * 60_000, id);
+        }
+      } finally {
+        sendingRef.current = false;
+        setBusy(runner.isInFlight());
+      }
+    })();
+  };
+
+  const handleSlash = async (name: string, args: string[]): Promise<void> => {
+    const cmd = findCommand(name);
+    if (!cmd) {
+      store.pushLine(c.dim(`(unknown command: /${name} — try /help)`));
+      return;
+    }
+    switch (cmd.name) {
+      case "help":
+        store.pushLine(c.bold("commands:"));
+        store.pushLine(renderHelp());
+        break;
+      case "status":
+        for (const l of statusLines()) store.pushLine(l);
+        break;
+      case "thinking": {
+        const arg = (args[0] ?? "").toLowerCase();
+        let next: ThinkingMode;
+        if (arg === "on" || arg === "off" || arg === "collapsed") next = arg;
+        else next = runner.getThinking() === "on" ? "off" : "on"; // no arg → toggle
+        runner.setThinking(next);
+        setThinking(next);
+        store.pushLine(c.dim(`(thinking: ${next})`));
+        break;
+      }
+      case "expand":
+        await runner.handleApprovalKey("r"); // toggles full tool output, prints the new state
+        break;
+      case "interrupt": {
+        const reason = await runner.interruptCurrent();
+        store.pushLine(c.dim(reason === "denied" ? "(approval denied)" : "(aborted)"));
+        break;
+      }
+      case "clear":
+        store.clear();
+        break;
+      case "switch":
+        if (args[0]) {
+          store.pushLine(c.dim(`(agent switch is a relaunch for now — exit and run:  benchagi ${args[0]})`));
+        } else {
+          store.pushLine(c.dim("(usage: /switch <agent> — relaunches the seat; hot-swap is coming)"));
+        }
+        break;
+      case "model":
+        store.pushLine(c.dim(`(model: ${model ?? "default"} — read-only; no mid-session model change)`));
+        break;
+      case "exit":
+        cleanupAndExit();
+        break;
+    }
+  };
+
+  function statusLines(): string[] {
+    const h = runner.healthSnapshot();
+    const tierStr = tier?.level ? `${tier.level}${tier.color ? ` (${tier.color})` : ""}` : "—";
+    const sess = runner.resumeKey() ?? "—";
+    return [
+      `${c.bold("🦅 " + cap(agentId))}  ${model ?? ""}  ${tierStr}`,
+      c.dim(`session: ${sess} · health: ${h.state} · thinking: ${runner.getThinking()} · expand: ${runner.isExpanded() ? "on" : "off"}`),
+    ];
+  }
+
+  function cleanupAndExit(): void {
+    exit();
+  }
+
+  return (
+    <Box flexDirection="column">
+      <Static items={lines}>{(line, i) => <Text key={i}>{line}</Text>}</Static>
+      {pending.length > 0 ? <Text>{pending}</Text> : null}
+      <Working active={busy} runId={runId} note={healthNote} />
+      <Input
+        busy={busy}
+        approvalActive={approval}
+        registry={SLASH_COMMANDS}
+        onSubmit={handleSubmit}
+        onApproval={(key) => void runner.handleApprovalKey(key)}
+        onInterrupt={() => void runner.interruptCurrent()}
+        onExit={cleanupAndExit}
+      />
+      <StatusBar
+        state={{
+          agentId,
+          model,
+          tier,
+          sessionShort,
+          health,
+          pendingApproval: approval,
+          thinking,
+          tokens: null, // dark until the gateway emits real usage — never fabricated
+        }}
+        width={width}
+      />
+    </Box>
+  );
+}
+
+function cap(s: string): string {
+  return s ? s[0]!.toUpperCase() + s.slice(1) : s;
+}
+
+// Launch the ink TUI: install the log sink so renderer output flows into the buffer, render the app,
+// and restore the sink on exit. The caller (cloud-seat) owns runner.connect()/close().
+export async function runTui(runner: ChatRunner, props: Omit<TuiProps, "store" | "runner">): Promise<void> {
+  const store = new LogStore();
+  store.pushLine(c.dim(`benchagi ${CLI_VERSION} · 🦅 type a message, /help for commands, /exit to quit`));
+  setLogSink(store.write);
+  try {
+    const app = render(<App runner={runner} store={store} {...props} />, { exitOnCtrlC: false });
+    await app.waitUntilExit();
+  } finally {
+    setLogSink(null);
+  }
+}

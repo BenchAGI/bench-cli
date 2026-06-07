@@ -3,7 +3,9 @@
 // here so tests can snapshot deterministically.
 
 import type { AgentEventPayload, ApprovalEventData } from "../protocol/types.js";
-import { c, println, termWidth, truncate } from "./ansi.js";
+import { c, println, termWidth, truncate, writeRaw } from "./ansi.js";
+
+export type ThinkingMode = "on" | "off" | "collapsed";
 
 export type RendererOptions = {
   showThinking: boolean;
@@ -22,8 +24,27 @@ export const DEFAULT_RENDERER_OPTIONS: RendererOptions = {
 export class StreamRenderer {
   private currentAssistantHasContent = false;
   private currentAssistantText = "";
+  // Thinking presentation: "on" streams reasoning under a branded 💭 gutter; "off" suppresses it;
+  // "collapsed" hides the text but drops a single 💭 marker per run so you know it reasoned.
+  private thinkingMode: ThinkingMode;
+  private thinkingOpen = false; // a 💭 reasoning block is mid-stream
+  private thinkingMarkedThisRun = false; // collapsed-mode marker already emitted this run
 
-  constructor(private opts: RendererOptions = DEFAULT_RENDERER_OPTIONS) {}
+  constructor(private opts: RendererOptions = DEFAULT_RENDERER_OPTIONS) {
+    this.thinkingMode = opts.showThinking ? "on" : "off";
+  }
+
+  /** Set the thinking presentation mode (bound to /thinking). Returns the new mode. */
+  setThinking(mode: ThinkingMode): ThinkingMode {
+    if (mode !== "on") this.closeThinking();
+    this.thinkingMode = mode;
+    return this.thinkingMode;
+  }
+
+  /** Read-only view of the current thinking mode. */
+  getThinking(): ThinkingMode {
+    return this.thinkingMode;
+  }
 
   /**
    * Flip the per-session full-tool-output flag (V1.1 — Item 5).
@@ -49,7 +70,7 @@ export class StreamRenderer {
         this.renderAssistant(p);
         break;
       case "thinking":
-        if (this.opts.showThinking) this.renderThinking(p);
+        this.renderThinking(p);
         break;
       case "tool":
         this.renderTool(p);
@@ -137,8 +158,11 @@ export class StreamRenderer {
     if (phase === "start" || phase === "started") {
       this.currentAssistantHasContent = false;
       this.currentAssistantText = "";
+      this.thinkingOpen = false;
+      this.thinkingMarkedThisRun = false;
       println(c.dim(`[run started · ${data?.runId ?? p.runId}]`));
     } else if (phase === "end" || phase === "ended" || phase === "complete") {
+      this.closeThinking();
       this.finishAssistantLine();
       println(c.dim(`[run ended]`));
     }
@@ -170,15 +194,16 @@ export class StreamRenderer {
   }
 
   private renderAssistantLabel(): void {
-    process.stdout.write(c.magenta("agent> "));
+    writeRaw(c.magenta("agent> "));
   }
 
   private renderAssistantDelta(delta: string): boolean {
     if (delta.length === 0) return false;
+    this.closeThinking();
     if (!this.currentAssistantHasContent) this.renderAssistantLabel();
     this.currentAssistantHasContent = true;
     this.currentAssistantText += delta;
-    process.stdout.write(delta);
+    writeRaw(delta);
     return true;
   }
 
@@ -191,25 +216,53 @@ export class StreamRenderer {
       }
       return false;
     }
+    this.closeThinking();
     if (!this.currentAssistantHasContent) this.renderAssistantLabel();
     this.currentAssistantHasContent = true;
     this.currentAssistantText += suffix;
-    process.stdout.write(suffix);
+    writeRaw(suffix);
     return true;
   }
 
   private finishAssistantLine(): void {
+    this.closeThinking();
     if (!this.currentAssistantHasContent) return;
     println();
     this.currentAssistantHasContent = false;
   }
 
   private renderThinking(p: AgentEventPayload): void {
+    if (this.thinkingMode === "off") return;
     const data = p.data as { phase?: string; text?: string; delta?: string } | undefined;
     if (!data) return;
     const text = data.delta ?? data.text ?? "";
     if (text.length === 0) return;
-    process.stdout.write(c.dim(c.italic(text)));
+    if (this.thinkingMode === "collapsed") {
+      // One unobtrusive marker per run — you know it reasoned, without the wall of text.
+      if (!this.thinkingMarkedThisRun) {
+        this.thinkingMarkedThisRun = true;
+        this.finishAssistantLine();
+        println(c.dim("💭 thinking…"));
+      }
+      return;
+    }
+    // "on": stream the reasoning under a branded 💭 gutter, dim + italic.
+    if (!this.thinkingOpen) {
+      if (this.currentAssistantHasContent) {
+        println();
+        this.currentAssistantHasContent = false;
+      }
+      writeRaw(c.dim("💭 "));
+      this.thinkingOpen = true;
+    }
+    writeRaw(c.dim(c.italic(text)));
+  }
+
+  // Close an open 💭 reasoning block with a newline so following content starts clean.
+  private closeThinking(): void {
+    if (!this.thinkingOpen) return;
+    this.thinkingOpen = false;
+    println();
   }
 
   private renderTool(p: AgentEventPayload): void {

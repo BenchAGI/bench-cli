@@ -64,16 +64,28 @@ export function termWidth(): number {
   return process.stdout.columns || 80;
 }
 
+// Output-sink seam. When a sink is installed (the ink TUI does this), all renderer output —
+// println/writeRaw (stdout) AND eprintln (stderr notices) — flows into it instead of the terminal,
+// so ink owns the screen. Default (null) = normal stream behavior for the readline / non-TTY path.
+export type LogSink = (chunk: string) => void;
+let logSink: LogSink | null = null;
+export function setLogSink(sink: LogSink | null): void {
+  logSink = sink;
+}
+
 export function println(text = ""): void {
-  process.stdout.write(`${text}\n`);
+  if (logSink) logSink(`${text}\n`);
+  else process.stdout.write(`${text}\n`);
 }
 
 export function writeRaw(text: string): void {
-  process.stdout.write(text);
+  if (logSink) logSink(text);
+  else process.stdout.write(text);
 }
 
 export function eprintln(text = ""): void {
-  process.stderr.write(`${text}\n`);
+  if (logSink) logSink(`${text}\n`);
+  else process.stderr.write(`${text}\n`);
 }
 
 // Truncate to N display chars (rough — counts chars, not graphemes).

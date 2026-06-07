@@ -7,8 +7,8 @@ import { LocalGatewayWsTransport } from "./transport/local-gateway.js";
 import { resolveGatewayToken, resolveGatewayPassword } from "./auth/gateway-token.js";
 import { loadFreshFirebaseIdToken } from "./auth/firebase-token.js";
 import { EventRouter } from "./render/event-router.js";
-import { StreamRenderer, DEFAULT_RENDERER_OPTIONS } from "./render/stream.js";
-import { LivenessIndicator } from "./render/liveness.js";
+import { StreamRenderer, DEFAULT_RENDERER_OPTIONS, type ThinkingMode } from "./render/stream.js";
+import { LivenessIndicator, type LivenessSnapshot } from "./render/liveness.js";
 import { ApprovalState, type ApprovalAction } from "./render/approval.js";
 import { classifyByModel, resolveLivenessThreshold, type Liveness } from "./probe/capability.js";
 import type { AgentEventPayload, EventFrame } from "./protocol/types.js";
@@ -25,6 +25,9 @@ export type RunnerOptions = {
   gatewayToken?: string;
   gatewayPassword?: string;
   traceFramesPath?: string;
+  // Managed by the ink TUI: liveness tracks clocks but never paints (the TUI renders its own
+  // working indicator + status bar). Renderer output is captured via the ansi log sink.
+  tui?: boolean;
 };
 
 export class ChatRunner {
@@ -126,6 +129,7 @@ export class ChatRunner {
       livenessThresholdMs: this.livenessThresholdMs,
       unhealthyTickThresholdMs: Math.max(15_000, 3 * policy.policy.tickIntervalMs),
       stuckRunThresholdMs: 120_000,
+      managed: this.opts.tui ?? false,
     });
     this.liveness.start();
 
@@ -537,6 +541,37 @@ export class ChatRunner {
 
   resumeKey(): string | null {
     return this.sessionKey;
+  }
+
+  /** Structured connection health for the TUI status bar (idle before connect). */
+  healthSnapshot(): LivenessSnapshot {
+    if (this.liveness) return this.liveness.snapshot();
+    return { state: "ok", runQuietMs: 0, gatewayTickMs: 0, inFlight: false, reconnectAttempt: null, reconnectDelayMs: null };
+  }
+
+  /** True while a run is in flight (drives the working indicator). */
+  isInFlight(): boolean {
+    return this.activeRunIds.size > 0;
+  }
+
+  /** The current run id, for the working indicator's deterministic word seed. */
+  currentRun(): string | null {
+    return this.currentRunId;
+  }
+
+  /** Set the thinking presentation mode (/thinking). Returns the new mode. */
+  setThinking(mode: ThinkingMode): ThinkingMode {
+    return this.renderer.setThinking(mode);
+  }
+
+  /** Read-only view of the current thinking mode. */
+  getThinking(): ThinkingMode {
+    return this.renderer.getThinking();
+  }
+
+  /** Read-only view of the expand-tool-output flag (/expand toggles it via [r]). */
+  isExpanded(): boolean {
+    return this.renderer.isFullOutput();
   }
 
   private async ensureSession(): Promise<void> {

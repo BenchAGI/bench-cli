@@ -19,6 +19,7 @@ export interface LaunchOpts {
   liveness?: Liveness;
   full?: boolean;
   noThinking?: boolean;
+  classic?: boolean;
   traceFramesPath?: string;
 }
 
