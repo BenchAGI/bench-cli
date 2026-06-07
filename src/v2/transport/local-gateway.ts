@@ -12,6 +12,7 @@ import { connect as netConnect } from "node:net";
 import { WebSocket } from "ws";
 import type { ConnectParams, EventFrame, HelloOk, RequestFrame, ResponseFrame } from "../protocol/types.js";
 import { GATEWAY_CLIENT_CAPS, PROTOCOL_VERSION } from "../protocol/types.js";
+import { CLI_VERSION } from "../commands/version.js";
 import type { ConnectOptions, HelloPolicy, Transport } from "./transport.js";
 import {
   buildDeviceAuthPayloadV3,
@@ -22,7 +23,6 @@ import {
 } from "../auth/device-identity.js";
 import { nextBackoffMs } from "./backoff.js";
 
-const CLI_VERSION = "1.0.0-beta.1";
 const CONNECT_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const REACHABILITY_TIMEOUT_MS = 500;
