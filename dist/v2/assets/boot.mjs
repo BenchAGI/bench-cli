@@ -38,7 +38,7 @@ const PORTRAIT_AVAILABLE = Array.isArray(PORTRAIT_ROWS) && PORTRAIT_ROWS.length 
 
 // Mono fallback ramp (light -> dense); matches scripts/generate-aurelius-ascii.py.
 const MONO_RAMP = " .,:;irsXA253hMHGS#9B&@";
-const PORTRAIT_MAX_COLS = 56; // never upscale past the committed master either
+const PORTRAIT_MAX_COLS = 64; // cap at the sprite's native size (1:1 when the terminal fits)
 const PORTRAIT_MIN_COLS = 24; // below this the portrait is too small to read -> compact frame
 
 // --- colour helpers ---------------------------------------------------------
