@@ -2,7 +2,7 @@
 
 import { println } from "../render/ansi.js";
 
-export const CLI_VERSION = "1.0.0-beta.4";
+export const CLI_VERSION = "1.0.0-beta.5";
 
 export async function commandVersion(): Promise<void> {
   println(`benchagi ${CLI_VERSION}`);

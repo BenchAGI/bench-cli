@@ -7,7 +7,7 @@ import { hasAccountToken, loadAccount, resolveApiBase } from "../launcher/accoun
 test("loadAccount recognizes env API token without requiring BENCHAGI_API_BASE", async () => {
   const account = await loadAccount({ BENCHAGI_TOKEN: "bench_test_token" } as NodeJS.ProcessEnv);
   assert.equal(account?.token, "bench_test_token");
-  assert.equal(resolveApiBase(account, {} as NodeJS.ProcessEnv), "https://app.benchagi.com/api");
+  assert.equal(resolveApiBase(account, {} as NodeJS.ProcessEnv), "https://benchagi.com/api");
   assert.equal(hasAccountToken(account), true);
 });
 

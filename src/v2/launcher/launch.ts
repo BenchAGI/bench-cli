@@ -29,7 +29,10 @@ export async function runLaunch(opts: LaunchOpts = {}): Promise<void> {
 
   const agents = await resolveRoster();
   if (!agents.length) {
-    eprintln(c.yellow("No agents available. Try `benchagi auth login`, or check `benchagi agents list`."));
+    eprintln(c.yellow("No agents are provisioned for your account yet."));
+    eprintln(c.dim("  • Make sure you're signed in:  benchagi auth login"));
+    eprintln(c.dim("  • Then ask your Bench admin to grant you agent access."));
+    eprintln(c.dim("  • Running your own gateway? Check:  benchagi agents list"));
     return;
   }
 

@@ -4,7 +4,9 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-const DEFAULT_API_BASE = "https://app.benchagi.com/api";
+// benchagi.com serves the CLI backend today (/api/v1/cli/*). Switch to
+// app.benchagi.com once that host is stood up. Override with BENCHAGI_API_BASE.
+const DEFAULT_API_BASE = "https://benchagi.com/api";
 export async function loadAccount(env = process.env) {
     if (env.BENCHAGI_API_BASE || env.BENCHAGI_TOKEN || env.BENCHAGI_INSTANCE_ID) {
         return {
