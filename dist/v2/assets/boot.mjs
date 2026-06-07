@@ -78,7 +78,8 @@ const reset = (mode) => (mode === "mono" ? "" : "\x1b[0m");
 export function detectCaps({ env = process.env, isTTY, columns, rows, fast, motion } = {}) {
   const tty = isTTY ?? Boolean(process.stdout.isTTY);
   const cols = columns ?? (Number(env.COLUMNS) || process.stdout.columns || 80);
-  const termRows = rows ?? (Number(env.LINES) || process.stdout.rows || 24);
+  // Non-TTY (piped/CI) has no live screen to overflow, so don't height-clamp it.
+  const termRows = rows ?? (tty ? (Number(env.LINES) || process.stdout.rows || 24) : Infinity);
   const noColor = "NO_COLOR" in env;
   const motionPref = motion ?? env.BENCH_BOOT_MOTION ?? "auto";
   const truecolor = /truecolor|24bit/i.test(env.COLORTERM || "");
@@ -91,7 +92,15 @@ export function detectCaps({ env = process.env, isTTY, columns, rows, fast, moti
   const animate =
     tty && mode !== "mono" && !fast && motionPref !== "off" && !env.CI;
 
-  return { mode, animate, columns: cols, rows: termRows, tty };
+  // "Blocky" render: paint each pixel as a background-coloured cell instead of a
+  // half-block glyph. Half-blocks (▀▄) don't tile vertically in Apple Terminal —
+  // they leave black scan-line gaps. Background colour fills the whole cell, so
+  // there's nothing to gap. Auto-on for Apple_Terminal; forceable via env.
+  const blocky =
+    env.BENCH_BOOT_BLOCKS === "1" ||
+    (env.BENCH_BOOT_BLOCKS !== "0" && /Apple_Terminal/i.test(env.TERM_PROGRAM || ""));
+
+  return { mode, animate, columns: cols, rows: termRows, blocky, tty };
 }
 
 // --- eagle portrait (real picture of Aurelius) ------------------------------
@@ -106,38 +115,69 @@ function portraitPixel(x, y) {
 
 const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-// Pick the on-screen pixel width: fit the terminal width, and fit the height
-// whenever rows are known (the cinematic clears + paints from home, so it must
-// not overflow), never upscaling past the committed master. May return a value
-// below PORTRAIT_MIN_COLS (even 0) on a short terminal — callers then drop to the
-// compact frame rather than overflow. (NB: assemble's non-eagle chrome is ~10
-// lines and each output line packs 2px of the square portrait, so eagle lines =
-// w/2; reserving 11 keeps total = w/2 + 10 within `rows`.)
-function portraitTargetWidth({ columns, rows }) {
-  let w = Math.min(PORTRAIT_W, PORTRAIT_MAX_COLS, Math.max(0, columns - 2));
-  if (rows) w = Math.min(w, 2 * Math.max(0, rows - 11));
-  return w;
+// Pick the sprite PIXEL width to sample to. Half-block: 1 col/px, 2 px/line.
+// Blocky: 2 cols/px (so pixels stay square), 1 px/line. Fit width AND height
+// whenever rows are known (the cinematic paints from home and must not overflow),
+// never upscaling past the committed master. May return below the readable minimum
+// (or 0) on a short terminal — callers then drop to the compact frame.
+// (assemble's non-eagle chrome is ~10 lines; reserving 11 keeps total within rows.)
+// Clean integer downscales of the committed master (64 -> 64 or the smaller 32).
+// Pixel art only looks right at integer scales, so we SNAP to one of these rather
+// than an arbitrary fit (64->56 looks janky). The smaller 32 is used whenever the
+// full 64 can't cleanly fit — e.g. blocky mode (2 cols/px) on most terminals.
+const SPRITE_SIZES = [PORTRAIT_W, Math.round(PORTRAIT_W / 2)]; // [64, 32]
+const snapPx = (maxW) => SPRITE_SIZES.find((s) => s <= maxW) || 0;
+
+function portraitTargetPx({ columns, rows, blocky }) {
+  const colsAvail = Math.max(0, columns - 2);
+  const lineBudget = rows ? Math.max(0, rows - 11) : Infinity;
+  const maxByW = blocky ? Math.floor(colsAvail / 2) : Math.min(PORTRAIT_MAX_COLS, colsAvail);
+  const maxByH = blocky ? lineBudget : 2 * lineBudget; // lines = wpx (blocky) or wpx/2 (half-block)
+  return snapPx(Math.min(PORTRAIT_W, maxByW, maxByH));
 }
 
-// Will the portrait actually fit (and read) at this terminal size?
-function portraitFits(columns, rows) {
-  return PORTRAIT_AVAILABLE && portraitTargetWidth({ columns, rows }) >= PORTRAIT_MIN_COLS;
+// Will the portrait fit at a clean size (64 or 32)? If not, callers use compact.
+function portraitFits(columns, rows, blocky) {
+  return PORTRAIT_AVAILABLE && portraitTargetPx({ columns, rows, blocky }) > 0;
 }
 
-// Render the portrait with half-blocks (truecolor/256) or a luminance ramp (mono).
+// Render the portrait. Truecolor/256: half-blocks (crisp, 2px/cell) OR — when the
+// terminal can't tile half-blocks (Apple_Terminal) — background-coloured cells
+// (gap-proof, 1px/cell, 2 cols wide to stay square). Mono: a luminance ramp.
 // Returns { lines, width } so the caller can centre it.
-function eaglePortraitBlock({ mode, columns, rows, bright = 1 }) {
-  const targetW = portraitTargetWidth({ columns, rows });
-  let targetH = Math.round((PORTRAIT_H * targetW) / PORTRAIT_W);
-  if (targetH % 2) targetH += 1; // even so every output line pairs two pixels
-  const sx = (x) => Math.min(PORTRAIT_W - 1, Math.floor((x * PORTRAIT_W) / targetW));
-  const sy = (y) => Math.min(PORTRAIT_H - 1, Math.floor((y * PORTRAIT_H) / targetH));
+function eaglePortraitBlock({ mode, columns, rows, blocky, bright = 1 }) {
+  const wpx = portraitTargetPx({ columns, rows, blocky });
   const shade = (rgb) => (bright >= 1 ? rgb : mix(BRAND.ink0, rgb, bright));
-
   const lines = [];
+
+  if (blocky) {
+    const hpx = Math.round((PORTRAIT_H * wpx) / PORTRAIT_W);
+    const sx = (x) => Math.min(PORTRAIT_W - 1, Math.floor((x * PORTRAIT_W) / wpx));
+    const sy = (y) => Math.min(PORTRAIT_H - 1, Math.floor((y * PORTRAIT_H) / hpx));
+    for (let y = 0; y < hpx; y += 1) {
+      let line = "";
+      for (let x = 0; x < wpx; x += 1) {
+        const c = portraitPixel(sx(x), sy(y));
+        if (!c) { line += "  "; continue; } // transparent -> two plain spaces
+        if (mode === "mono") {
+          const idx = Math.min(MONO_RAMP.length - 1, Math.max(0, Math.round((luma(c) * (MONO_RAMP.length - 1)) / 255)));
+          line += MONO_RAMP[idx] + MONO_RAMP[idx];
+          continue;
+        }
+        line += `${bg(shade(c), mode)}  ${reset(mode)}`; // background fills the whole cell
+      }
+      lines.push(line);
+    }
+    return { lines, width: wpx * 2 };
+  }
+
+  let targetH = Math.round((PORTRAIT_H * wpx) / PORTRAIT_W);
+  if (targetH % 2) targetH += 1; // even so every output line pairs two pixels
+  const sx = (x) => Math.min(PORTRAIT_W - 1, Math.floor((x * PORTRAIT_W) / wpx));
+  const sy = (y) => Math.min(PORTRAIT_H - 1, Math.floor((y * PORTRAIT_H) / targetH));
   for (let y = 0; y < targetH; y += 2) {
     let line = "";
-    for (let x = 0; x < targetW; x += 1) {
+    for (let x = 0; x < wpx; x += 1) {
       const tc = portraitPixel(sx(x), sy(y));
       const bc = portraitPixel(sx(x), sy(y + 1));
       if (mode === "mono") {
@@ -155,7 +195,7 @@ function eaglePortraitBlock({ mode, columns, rows, bright = 1 }) {
     }
     lines.push(line);
   }
-  return { lines, width: targetW };
+  return { lines, width: wpx };
 }
 
 // --- wordmark grid ----------------------------------------------------------
@@ -210,7 +250,7 @@ function eagleLines({ mode, bright = 1, sprite = eagleSprite(), pad = "" }) {
   return lines;
 }
 
-function wordmarkLines({ mode, reveal = Infinity, band = null, pad = "" }) {
+function wordmarkLines({ mode, reveal = Infinity, band = null, pad = "", blocky = false }) {
   const { rows, width } = wordmarkGrid();
   return rows.map((row) => {
     let line = pad;
@@ -224,7 +264,9 @@ function wordmarkLines({ mode, reveal = Infinity, band = null, pad = "" }) {
         const d = Math.abs(x - band) / SHIMMER_BAND;
         if (d < 1) color = mix(color, BRAND.chalk, (1 - d) * 0.6);
       }
-      line += `${fg(color, mode)}█${reset(mode)}`;
+      // Blocky terminals (Apple_Terminal) gap full-block glyphs vertically too —
+      // paint a background-coloured cell instead so the wordmark stays solid.
+      line += blocky ? `${bg(color, mode)} ${reset(mode)}` : `${fg(color, mode)}█${reset(mode)}`;
     }
     return line;
   });
@@ -244,6 +286,7 @@ function assemble({
   mode,
   columns,
   rows,
+  blocky = false,
   eagleBright = 1,
   sprite = eagleSprite(),
   reveal = Infinity,
@@ -256,7 +299,7 @@ function assemble({
   let eagleRaw = null;
   let eagleW;
   if (PORTRAIT_AVAILABLE) {
-    const block = eaglePortraitBlock({ mode, columns, rows, bright: eagleBright });
+    const block = eaglePortraitBlock({ mode, columns, rows, blocky, bright: eagleBright });
     eagleRaw = block.lines;
     eagleW = block.width;
   } else {
@@ -278,7 +321,7 @@ function assemble({
     "",
     ...eagleBlock,
     "",
-    ...wordmarkLines({ mode, reveal, band, pad: wPad }),
+    ...wordmarkLines({ mode, reveal, band, pad: wPad, blocky }),
     "",
     taglineLine({ mode, chars: taglineChars, pad: tPad }),
     "",
@@ -292,14 +335,14 @@ function compactFrame({ mode, columns }) {
   return [`${pad}${color}${WORDMARK}${reset(mode)}`, `${padFor(TAGLINE.length, columns)}${taglineLine({ mode, pad: "" })}`];
 }
 
-export function renderStaticFrame({ mode = "mono", columns = 80, rows } = {}) {
+export function renderStaticFrame({ mode = "mono", columns = 80, rows, blocky = false } = {}) {
   if (columns < 44) return compactFrame({ mode, columns }).join("\n");
   // When rows are known and too short for even a minimal portrait, drop to compact
   // rather than dump a tall frame. (Rows unknown — e.g. piped — renders full size.)
-  if (PORTRAIT_AVAILABLE && rows && !portraitFits(columns, rows)) {
+  if (PORTRAIT_AVAILABLE && rows && !portraitFits(columns, rows, blocky)) {
     return compactFrame({ mode, columns }).join("\n");
   }
-  return assemble({ mode, columns, rows }).join("\n");
+  return assemble({ mode, columns, rows, blocky }).join("\n");
 }
 
 // --- animation --------------------------------------------------------------
@@ -312,11 +355,11 @@ function paint(lines) {
 
 export async function runBoot(opts = {}) {
   const caps = detectCaps(opts);
-  const { mode, animate, columns, rows } = caps;
+  const { mode, animate, columns, rows, blocky } = caps;
 
   // Paths 1 & 2: static frame (mono has zero escape bytes).
   if (!animate) {
-    const frame = renderStaticFrame({ mode, columns, rows });
+    const frame = renderStaticFrame({ mode, columns, rows, blocky });
     if (opts.write !== false) process.stdout.write(frame + "\n");
     return frame;
   }
@@ -330,8 +373,8 @@ export async function runBoot(opts = {}) {
 
   // Too few rows for the cinematic to fit — the animation paints from cursor-home,
   // so an overflowing frame would scroll-smear. Print one static (compact) frame.
-  if (PORTRAIT_AVAILABLE && !portraitFits(columns, rows)) {
-    const frame = renderStaticFrame({ mode, columns, rows });
+  if (PORTRAIT_AVAILABLE && !portraitFits(columns, rows, blocky)) {
+    const frame = renderStaticFrame({ mode, columns, rows, blocky });
     process.stdout.write(frame + "\n");
     return frame;
   }
