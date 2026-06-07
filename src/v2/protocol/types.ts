@@ -1,6 +1,6 @@
 // Minimal mirror of OpenClaw's gateway protocol surface that benchagi
-// V2 needs. The authoritative schema lives in
-// /Users/coryshelton/clawd/openclaw/src/gateway/protocol/schema/frames.ts —
+// V2 needs. The authoritative schema lives in the openclaw repo at
+// src/gateway/protocol/schema/frames.ts —
 // keep this file aligned. We re-derive shapes here rather than depend on
 // the openclaw package because openclaw isn't published.
 

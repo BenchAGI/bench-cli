@@ -1,6 +1,6 @@
 // LocalGatewayWsTransport — ADR-004.
-// Connects to ws://127.0.0.1:18789. Protocol per
-// /Users/coryshelton/clawd/openclaw/src/gateway/client.ts:282-339, 725-789:
+// Connects to ws://127.0.0.1:18789. Protocol per the openclaw repo
+// src/gateway/client.ts (connect handshake):
 //   1. WS open
 //   2. Server emits event { event: "connect.challenge", payload: { nonce } }
 //   3. Client sends req { type: "req", id, method: "connect", params: ConnectParams }
