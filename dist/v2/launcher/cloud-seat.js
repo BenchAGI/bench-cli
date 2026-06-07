@@ -9,6 +9,7 @@ import { listAgents, resolveShortName } from "../commands/agents.js";
 import { loadState, recordRecent } from "../state/state-file.js";
 import { CLI_VERSION } from "../commands/version.js";
 import { loadAccount } from "./account.js";
+import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 // Branded ANSI for the cloud REPL status line (matches the local seat status line).
 const IR = "\x1b[38;2;255;45;85m";
 const COPPER = "\x1b[38;2;196;122;58m";
@@ -56,10 +57,19 @@ export async function singleTurn(runner, message) {
 export async function replLoop(runner, agentId, model) {
     // Status line above the prompt each turn: the agent you're talking to, the
     // logged-in human + access tier, and a 🔔 when the agent is waiting on you.
-    const account = await loadAccount().catch(() => null);
-    const user = account?.user;
-    const who = user?.preferredName || user?.name || user?.email;
-    const access = user?.accessLevel ? (user.accessColor ? `${user.accessLevel} (${user.accessColor})` : user.accessLevel) : "";
+    const [account, profile] = await Promise.all([loadAccount().catch(() => null), loadUserProfile().catch(() => null)]);
+    // Prefer the server-verified profile; fall back to a local account.json assertion.
+    let who;
+    let access = "";
+    if (profileIsFresh(profile) && profile) {
+        who = profile.displayName || profile.email;
+        access = profile.accessLevel ? (profile.accessColor ? `${profile.accessLevel} (${profile.accessColor})` : profile.accessLevel) : "";
+    }
+    else if (account?.user) {
+        const a = account.user;
+        who = a.preferredName || a.name || a.email;
+        access = a.accessLevel ? (a.accessColor ? `${a.accessLevel} (${a.accessColor})` : a.accessLevel) : "";
+    }
     const ms = shortModel(model);
     const statusLine = () => {
         const parts = [`🦅 ${IR}${cap(agentId)}${SRESET}`];

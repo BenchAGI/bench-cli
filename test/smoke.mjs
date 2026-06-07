@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { parseArgs } from "../src/lib/args.mjs";
 import { extractJson, cleanStderr } from "../src/lib/openclaw.mjs";
 import { resolveAgentId } from "../src/lib/agents.mjs";
+import { profileIsFresh } from "../dist/v2/state/user-profile.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BENCH = path.resolve(__dirname, "../bin/bench.mjs");
@@ -215,6 +216,14 @@ await test("attention set→render→clear surfaces a notification then removes 
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
+});
+
+await test("profileIsFresh: fresh within window, false when stale/missing/garbage", () => {
+  assert.equal(profileIsFresh(null), false);
+  assert.equal(profileIsFresh({}), false);
+  assert.equal(profileIsFresh({ verifiedAt: new Date().toISOString() }), true);
+  assert.equal(profileIsFresh({ verifiedAt: new Date(Date.now() - 40 * 86400000).toISOString() }), false);
+  assert.equal(profileIsFresh({ verifiedAt: "not-a-date" }), false);
 });
 
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
