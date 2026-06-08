@@ -4,7 +4,7 @@
 // the screen via the ansi log sink → LogStore (set up in runTui); ink owns stdout directly.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Box, Static, Text, render, useApp } from "ink";
+import { Box, Text, render, useApp } from "ink";
 
 import { c, setLogSink, BRAND_HEX } from "../render/ansi.js";
 import { CLI_VERSION } from "../commands/version.js";
@@ -31,14 +31,41 @@ const POLL_MS = 250;
 function termCols(): number {
   return process.stdout.columns || 80;
 }
+function termRows(): number {
+  return process.stdout.rows || 24;
+}
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+function displayWidth(s: string): number {
+  return s.replace(ANSI_RE, "").length;
+}
+
+// Pick the most-recent lines that fit `budgetRows` once wrapping at `cols` is accounted for, so the
+// framed viewport never overflows — overflow would scroll the terminal and unpin the bottom bar.
+function visibleTail(items: string[], cols: number, budgetRows: number): string[] {
+  const out: string[] = [];
+  let used = 0;
+  const inner = Math.max(1, cols - 2); // paddingX={1}
+  for (let i = items.length - 1; i >= 0; i--) {
+    const rows = Math.max(1, Math.ceil(displayWidth(items[i]!) / inner));
+    if (out.length > 0 && used + rows > budgetRows) break;
+    out.unshift(items[i]!);
+    used += rows;
+  }
+  return out;
+}
 
 export function App(props: TuiProps): JSX.Element {
   const { runner, store, agentId, model, tier } = props;
   const { exit } = useApp();
 
+  // Who's typing — the user's first name (falls back to "you").
+  const me = props.who?.trim().split(/\s+/)[0] || "you";
+  const agentColor = BRAND_HEX.infrared; // the agent's signature color (frames the text area)
+
   // Output buffer (external store) → committed lines + live pending region.
   useSyncExternalStore(store.subscribe, store.getVersion);
-  const { lines, pending, generation } = store.snapshot();
+  const { lines, pending } = store.snapshot();
 
   // Live runtime state, polled from the runner (no event-emitter refactor needed).
   const [busy, setBusy] = useState(false);
@@ -49,6 +76,7 @@ export function App(props: TuiProps): JSX.Element {
   const [thinking, setThinking] = useState<ThinkingMode>(runner.getThinking());
   const [sessionShort, setSessionShort] = useState<string | undefined>(undefined);
   const [width, setWidth] = useState(termCols());
+  const [height, setHeight] = useState(termRows());
 
   useEffect(() => {
     const tick = (): void => {
@@ -75,7 +103,10 @@ export function App(props: TuiProps): JSX.Element {
   }, [runner, agentId]);
 
   useEffect(() => {
-    const onResize = (): void => setWidth(termCols());
+    const onResize = (): void => {
+      setWidth(termCols());
+      setHeight(termRows());
+    };
     process.stdout.on("resize", onResize);
     return () => {
       process.stdout.off("resize", onResize);
@@ -96,7 +127,7 @@ export function App(props: TuiProps): JSX.Element {
       store.pushLine(c.dim("(turn still in flight — Ctrl-C to abort before sending another)"));
       return;
     }
-    store.pushLine(c.cyan(`you> ${line}`));
+    store.pushLine(c.cyan(`${me}> `) + line); // e.g. "Cory> measure 123 Main"
     void (async () => {
       sendingRef.current = true;
       setBusy(true);
@@ -179,12 +210,30 @@ export function App(props: TuiProps): JSX.Element {
     exit();
   }
 
+  // Bottom-anchored: the framed text area fills the screen and the conversation emerges from just
+  // above the input. Show the most-recent lines that fit; older lines scroll off the top.
+  const items = pending.length > 0 ? lines.concat(pending) : lines;
+  const budget = Math.max(3, height - 7); // reserve: 2 brake lines + working + input(+hint) + status(2)
+  const visible = visibleTail(items, width, budget);
+
   return (
-    <Box flexDirection="column">
-      <Static key={generation} items={lines}>
-        {(line, i) => <Text key={i}>{line}</Text>}
-      </Static>
-      {pending.length > 0 ? <Text>{pending}</Text> : null}
+    <Box flexDirection="column" height={height}>
+      <Box
+        flexGrow={1}
+        flexDirection="column"
+        justifyContent="flex-end"
+        borderStyle="single"
+        borderColor={agentColor}
+        borderTop={true}
+        borderBottom={true}
+        borderLeft={false}
+        borderRight={false}
+        paddingX={1}
+      >
+        {visible.map((line, i) => (
+          <Text key={i}>{line}</Text>
+        ))}
+      </Box>
       <Working active={busy} runId={runId} note={healthNote} />
       <Input
         busy={busy}

@@ -83,7 +83,7 @@ export function buildStatusSegments(s: StatusBarState): StatusSegment[] {
 export function StatusBar({ state, width }: { state: StatusBarState; width: number }): JSX.Element {
   const segs = buildStatusSegments(state);
   return (
-    <Box width={width} borderStyle="single" borderColor={BRAND_HEX.dim} borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} paddingX={1}>
+    <Box width={width} paddingX={1}>
       <Text wrap="truncate-end">
         {segs.map((seg, i) => (
           <Text key={seg.key}>

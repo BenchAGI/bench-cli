@@ -164,6 +164,7 @@ export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts =
     showThinking: !opts.noThinking,
     traceFramesPath: opts.traceFramesPath,
     tui: useTui,
+    assistantLabel: cap(agent.id), // "Aurelius>" instead of "agent>"
   });
   try {
     await runner.connect();

@@ -3,7 +3,7 @@
 // here so tests can snapshot deterministically.
 
 import type { AgentEventPayload, ApprovalEventData } from "../protocol/types.js";
-import { c, println, termWidth, truncate, writeRaw } from "./ansi.js";
+import { c, brand, println, termWidth, truncate, writeRaw } from "./ansi.js";
 
 export type ThinkingMode = "on" | "off" | "collapsed";
 
@@ -12,6 +12,8 @@ export type RendererOptions = {
   showFullToolOutput: boolean;
   toolLineCap: number;
   toolByteCap: number;
+  // Label shown before assistant output (e.g. "Aurelius"). Defaults to "agent".
+  assistantLabel?: string;
 };
 
 export const DEFAULT_RENDERER_OPTIONS: RendererOptions = {
@@ -29,9 +31,16 @@ export class StreamRenderer {
   private thinkingMode: ThinkingMode;
   private thinkingOpen = false; // a 💭 reasoning block is mid-stream
   private thinkingMarkedThisRun = false; // collapsed-mode marker already emitted this run
+  private assistantLabel: string;
 
   constructor(private opts: RendererOptions = DEFAULT_RENDERER_OPTIONS) {
     this.thinkingMode = opts.showThinking ? "on" : "off";
+    this.assistantLabel = opts.assistantLabel ?? "agent";
+  }
+
+  /** Set the label shown before assistant output (e.g. the agent's display name). */
+  setAssistantLabel(name: string): void {
+    if (name && name.trim().length > 0) this.assistantLabel = name.trim();
   }
 
   /** Set the thinking presentation mode (bound to /thinking). Returns the new mode. */
@@ -194,7 +203,7 @@ export class StreamRenderer {
   }
 
   private renderAssistantLabel(): void {
-    writeRaw(c.magenta("agent> "));
+    writeRaw(brand.ir(`${this.assistantLabel}> `)); // agent's color (IR)
   }
 
   private renderAssistantDelta(delta: string): boolean {

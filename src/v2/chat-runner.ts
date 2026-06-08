@@ -28,6 +28,8 @@ export type RunnerOptions = {
   // Managed by the ink TUI: liveness tracks clocks but never paints (the TUI renders its own
   // working indicator + status bar). Renderer output is captured via the ansi log sink.
   tui?: boolean;
+  // Label before assistant output (e.g. "Aurelius"). Defaults to "agent".
+  assistantLabel?: string;
 };
 
 export class ChatRunner {
@@ -72,6 +74,7 @@ export class ChatRunner {
       ...DEFAULT_RENDERER_OPTIONS,
       showFullToolOutput: opts.showFullToolOutput ?? false,
       showThinking: opts.showThinking ?? true,
+      assistantLabel: opts.assistantLabel,
     });
   }
 
