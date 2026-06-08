@@ -17,6 +17,7 @@ import { StatusBar, type HealthState } from "./status-bar.js";
 import { Working } from "./working.js";
 import { Input, slashMenuRows } from "./input.js";
 import { initInput, type InputState } from "./input-model.js";
+import { Palette, PALETTE_ROWS } from "./palette.js";
 
 export type TuiProps = {
   runner: ChatRunner;
@@ -96,6 +97,7 @@ export function App(props: TuiProps): JSX.Element {
   const [height, setHeight] = useState(termRows());
   const [scroll, setScroll] = useState(0); // lines scrolled up from the live bottom (0 = following)
   const [istate, setIstate] = useState<InputState>(() => initInput()); // lifted so layout fits the menu
+  const [paletteOpen, setPaletteOpen] = useState(false); // Ctrl+K command palette
 
   useEffect(() => {
     const tick = (): void => {
@@ -265,7 +267,8 @@ export function App(props: TuiProps): JSX.Element {
   // above the input. Show the lines that fit; older lines scroll off the top (PgUp to reveal).
   const items = pending.length > 0 ? lines.concat(pending) : lines;
   const menuRows = slashMenuRows(istate.buffer, SLASH_COMMANDS); // shrink the viewport to fit the slash menu
-  const budget = Math.max(3, height - 7 - menuRows); // reserve: 2 brake lines + working + input + status(2) + menu
+  // Reserve rows below the text frame: palette replaces working+input when open.
+  const budget = Math.max(3, paletteOpen ? height - 4 - PALETTE_ROWS : height - 7 - menuRows);
   const maxScroll = Math.max(0, items.length - budget);
   const sc = Math.min(scroll, maxScroll); // clamped so the viewport never goes blank
   const pageStep = Math.max(1, budget - 2);
@@ -274,6 +277,11 @@ export function App(props: TuiProps): JSX.Element {
   // PgUp/PgDn scroll the history. (App-level useInput coexists with the input editor's; neither
   // consumes the other's keys — PgUp/PgDn aren't printable and the editor ignores them.)
   useInput((input, key) => {
+    if (key.ctrl && input === "k") {
+      setPaletteOpen((o) => !o); // Ctrl+K toggles the command palette
+      return;
+    }
+    if (paletteOpen) return; // the palette owns input while open
     if (key.pageUp) setScroll(() => Math.min(maxScroll, sc + pageStep));
     else if (key.pageDown) setScroll(() => Math.max(0, sc - pageStep));
     else if (key.ctrl && input === "o") {
@@ -315,22 +323,37 @@ export function App(props: TuiProps): JSX.Element {
       {sc > 0 ? (
         <Text color={BRAND_HEX.amber}>{`  ↑ ${sc} earlier line${sc === 1 ? "" : "s"} · PgDn to come back · send → live`}</Text>
       ) : null}
-      <Working active={busy} runId={runId} note={healthNote} />
-      <Input
-        state={istate}
-        onChange={setIstate}
-        busy={busy}
-        approvalActive={approval}
-        // Only consume a/d/r as control keys while a run is in flight (mirrors the readline `busy`
-        // guard in prompt.ts) — otherwise 'r' (expand toggle) would eat the first letter of an idle
-        // message like "roof"/"remove". Live isInFlight() check, no 250ms-polled staleness.
-        canConsumeKey={(key) => runner.isInFlight() && runner.canHandleApprovalKey(key)}
-        registry={SLASH_COMMANDS}
-        onSubmit={handleSubmit}
-        onApproval={(key) => void runner.handleApprovalKey(key)}
-        onInterrupt={() => void runner.interruptCurrent()}
-        onExit={cleanupAndExit}
-      />
+      {paletteOpen ? (
+        <Palette
+          commands={SLASH_COMMANDS}
+          width={width}
+          onRun={(name) => {
+            setPaletteOpen(false);
+            setScroll(0);
+            void handleSlash(name, []);
+          }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      ) : (
+        <>
+          <Working active={busy} runId={runId} note={healthNote} />
+          <Input
+            state={istate}
+            onChange={setIstate}
+            busy={busy}
+            approvalActive={approval}
+            // Only consume a/d/r as control keys while a run is in flight (mirrors the readline `busy`
+            // guard in prompt.ts) — otherwise 'r' (expand toggle) would eat the first letter of an idle
+            // message like "roof"/"remove". Live isInFlight() check, no 250ms-polled staleness.
+            canConsumeKey={(key) => runner.isInFlight() && runner.canHandleApprovalKey(key)}
+            registry={SLASH_COMMANDS}
+            onSubmit={handleSubmit}
+            onApproval={(key) => void runner.handleApprovalKey(key)}
+            onInterrupt={() => void runner.interruptCurrent()}
+            onExit={cleanupAndExit}
+          />
+        </>
+      )}
       <StatusBar
         state={{
           agentId,
