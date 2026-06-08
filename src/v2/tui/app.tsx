@@ -4,7 +4,7 @@
 // the screen via the ansi log sink → LogStore (set up in runTui); ink owns stdout directly.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Box, Text, render, useApp } from "ink";
+import { Box, Text, render, useApp, useInput } from "ink";
 
 import { c, setLogSink, BRAND_HEX } from "../render/ansi.js";
 import { highlight } from "../render/highlight.js";
@@ -41,13 +41,15 @@ function displayWidth(s: string): number {
   return s.replace(ANSI_RE, "").length;
 }
 
-// Pick the most-recent lines that fit `budgetRows` once wrapping at `cols` is accounted for, so the
-// framed viewport never overflows — overflow would scroll the terminal and unpin the bottom bar.
-function visibleTail(items: string[], cols: number, budgetRows: number): string[] {
+// Pick the lines that fit `budgetRows` once wrapping at `cols` is accounted for, so the framed
+// viewport never overflows (overflow would scroll the terminal and unpin the bottom bar). `scroll`
+// is how many lines up from the live bottom to anchor (0 = following the latest output).
+function visibleTail(items: string[], cols: number, budgetRows: number, scroll = 0): string[] {
   const out: string[] = [];
   let used = 0;
   const inner = Math.max(1, cols - 2); // paddingX={1}
-  for (let i = items.length - 1; i >= 0; i--) {
+  const end = Math.max(0, items.length - scroll); // exclusive index of the last visible line
+  for (let i = end - 1; i >= 0; i--) {
     const rows = Math.max(1, Math.ceil(displayWidth(items[i]!) / inner));
     if (out.length > 0 && used + rows > budgetRows) break;
     out.unshift(items[i]!);
@@ -78,6 +80,7 @@ export function App(props: TuiProps): JSX.Element {
   const [sessionShort, setSessionShort] = useState<string | undefined>(undefined);
   const [width, setWidth] = useState(termCols());
   const [height, setHeight] = useState(termRows());
+  const [scroll, setScroll] = useState(0); // lines scrolled up from the live bottom (0 = following)
 
   useEffect(() => {
     const tick = (): void => {
@@ -128,6 +131,7 @@ export function App(props: TuiProps): JSX.Element {
       store.pushLine(c.dim("(turn still in flight — Ctrl-C to abort before sending another)"));
       return;
     }
+    setScroll(0); // sending snaps back to the live bottom
     store.pushLine(""); // blank line above your message
     store.pushLine(c.cyan(`${me}> `) + line); // e.g. "Cory> measure 123 Main"
     store.pushLine(""); // blank line below it → his reply isn't pressed against yours
@@ -214,10 +218,28 @@ export function App(props: TuiProps): JSX.Element {
   }
 
   // Bottom-anchored: the framed text area fills the screen and the conversation emerges from just
-  // above the input. Show the most-recent lines that fit; older lines scroll off the top.
+  // above the input. Show the lines that fit; older lines scroll off the top (PgUp to reveal).
   const items = pending.length > 0 ? lines.concat(pending) : lines;
   const budget = Math.max(3, height - 7); // reserve: 2 brake lines + working + input(+hint) + status(2)
-  const visible = visibleTail(items, width, budget);
+  const maxScroll = Math.max(0, items.length - budget);
+  const sc = Math.min(scroll, maxScroll); // clamped so the viewport never goes blank
+  const pageStep = Math.max(1, budget - 2);
+  const visible = visibleTail(items, width, budget, sc);
+
+  // PgUp/PgDn scroll the history. (App-level useInput coexists with the input editor's; neither
+  // consumes the other's keys — PgUp/PgDn aren't printable and the editor ignores them.)
+  useInput((_input, key) => {
+    if (key.pageUp) setScroll(() => Math.min(maxScroll, sc + pageStep));
+    else if (key.pageDown) setScroll(() => Math.max(0, sc - pageStep));
+  });
+
+  // While scrolled up, keep the viewport anchored to the same content as new lines commit below.
+  const prevLen = useRef(items.length);
+  useEffect(() => {
+    const grew = items.length - prevLen.current;
+    prevLen.current = items.length;
+    if (grew > 0) setScroll((s) => (s > 0 ? s + grew : 0));
+  }, [items.length]);
 
   return (
     <Box flexDirection="column" height={height}>
@@ -240,6 +262,9 @@ export function App(props: TuiProps): JSX.Element {
           <Text key={i}>{line.length > 0 ? highlight(line) : " "}</Text>
         ))}
       </Box>
+      {sc > 0 ? (
+        <Text color={BRAND_HEX.amber}>{`  ↑ ${sc} earlier line${sc === 1 ? "" : "s"} · PgDn to come back · send → live`}</Text>
+      ) : null}
       <Working active={busy} runId={runId} note={healthNote} />
       <Input
         busy={busy}
