@@ -4,7 +4,7 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { highlight } from "../render/highlight.js";
+import { highlight, highlightCode, annotateCodeBlocks } from "../render/highlight.js";
 
 test("strips inline code backticks", () => {
   assert.equal(highlight("run `npm test` now"), "run npm test now");
@@ -49,4 +49,23 @@ test("multiple decorations on one line all strip cleanly", () => {
     highlight("**Note**: see `cfg.json` by 2026-06-07 — costs $50"),
     "Note: see cfg.json by 2026-06-07 — costs $50",
   );
+});
+
+test("annotateCodeBlocks classifies fences, code, and prose", () => {
+  const kinds = annotateCodeBlocks(["Here you go:", "```js", "const x = 1;", "console.log(x);", "```", "done"]);
+  assert.deepEqual(
+    kinds.map((k) => k.kind),
+    ["text", "open", "code", "code", "close", "text"],
+  );
+  assert.equal(kinds[1]!.lang, "js");
+});
+
+test("annotateCodeBlocks tracks an unterminated block (window scrolled mid-block)", () => {
+  const kinds = annotateCodeBlocks(["```py", "print(1)", "print(2)"]);
+  assert.deepEqual(kinds.map((k) => k.kind), ["open", "code", "code"]);
+});
+
+test("highlightCode leaves plain code text intact when color is off", () => {
+  // non-TTY in tests → no color codes; code passes through unmangled (no markers to strip)
+  assert.equal(highlightCode('const x = "hi"; // note'), 'const x = "hi"; // note');
 });

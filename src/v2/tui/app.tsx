@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
 
 import { c, setLogSink, BRAND_HEX } from "../render/ansi.js";
-import { highlight } from "../render/highlight.js";
+import { highlight, highlightCode, annotateCodeBlocks } from "../render/highlight.js";
 import { CLI_VERSION } from "../commands/version.js";
 import type { ChatRunner } from "../chat-runner.js";
 import { parseSlash, findCommand, renderHelp, SLASH_COMMANDS } from "../repl/slash.js";
@@ -273,6 +273,11 @@ export function App(props: TuiProps): JSX.Element {
   const sc = Math.min(scroll, maxScroll); // clamped so the viewport never goes blank
   const pageStep = Math.max(1, budget - 2);
   const visible = visibleTail(items, width, budget, sc);
+  // Code-block awareness across ALL items, then map onto the visible window (so a block scrolled
+  // into the middle still renders as code). visStart = index of the first visible line.
+  const kinds = annotateCodeBlocks(items);
+  const visStart = Math.max(0, items.length - sc - visible.length);
+  const rule = (n: number) => "─".repeat(Math.max(2, n));
 
   // PgUp/PgDn scroll the history. (App-level useInput coexists with the input editor's; neither
   // consumes the other's keys — PgUp/PgDn aren't printable and the editor ignores them.)
@@ -313,12 +318,21 @@ export function App(props: TuiProps): JSX.Element {
         borderRight={false}
         paddingX={1}
       >
-        {visible.map((line, i) => (
-          // Render empty lines as a space so ink gives them height — preserves paragraph breaks
-          // (a bare empty <Text> collapses to zero rows and mushes paragraphs together).
-          // highlight() decorates links/code/bold/dates/money (ANSI-aware: existing colors kept).
-          <Text key={i}>{line.length > 0 ? highlight(line) : " "}</Text>
-        ))}
+        {visible.map((line, i) => {
+          const kind = kinds[visStart + i] ?? { kind: "text" as const };
+          if (line.length === 0 && kind.kind !== "code") return <Text key={i}> </Text>;
+          // Fenced code blocks: framed section + gutter + syntax colors.
+          if (kind.kind === "open") {
+            const label = kind.lang || "code";
+            return (
+              <Text key={i} color={BRAND_HEX.dim}>{`┌─ ${label} ${rule(width - label.length - 12)}`}</Text>
+            );
+          }
+          if (kind.kind === "close") return <Text key={i} color={BRAND_HEX.dim}>{`└${rule(width - 10)}`}</Text>;
+          if (kind.kind === "code") return <Text key={i}>{c.dim("│ ") + highlightCode(line)}</Text>;
+          // Prose: links/inline-code/bold/dates/money (ANSI-aware: existing colors kept).
+          return <Text key={i}>{highlight(line)}</Text>;
+        })}
       </Box>
       {sc > 0 ? (
         <Text color={BRAND_HEX.amber}>{`  ↑ ${sc} earlier line${sc === 1 ? "" : "s"} · PgDn to come back · send → live`}</Text>

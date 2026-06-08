@@ -42,6 +42,57 @@ function decorate(run: string): string {
   });
 }
 
+// --- fenced code blocks ----------------------------------------------------
+// Detect ``` fences across a list of committed lines and classify each line, so the TUI can frame
+// code blocks (gutter + section borders) and syntax-highlight their contents. Fence state is tracked
+// across the whole list so a window scrolled into the middle of a block still renders as code.
+
+export type LineKind = { kind: "open" | "close" | "code" | "text"; lang?: string };
+
+export function annotateCodeBlocks(lines: string[]): LineKind[] {
+  const out: LineKind[] = [];
+  let inFence = false;
+  let lang = "";
+  for (const line of lines) {
+    const t = line.replace(PASSTHROUGH, "").trim();
+    const m = /^```+(\w*)$/.exec(t);
+    if (m) {
+      if (!inFence) {
+        inFence = true;
+        lang = m[1] ?? "";
+        out.push({ kind: "open", lang });
+      } else {
+        inFence = false;
+        out.push({ kind: "close", lang });
+      }
+    } else {
+      out.push(inFence ? { kind: "code", lang } : { kind: "text" });
+    }
+  }
+  return out;
+}
+
+// Generic, language-agnostic syntax coloring for a code line: strings (green), comments (dim),
+// a common keyword set (infrared), numbers (amber). First-match-wins so keywords inside strings or
+// comments aren't recolored. No-ops (returns the text) when color is off.
+const CODE_TOKENS =
+  /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|(\b(?:function|const|let|var|return|if|else|elif|for|while|do|switch|case|break|continue|import|export|from|default|class|extends|super|new|async|await|yield|try|catch|finally|throw|typeof|instanceof|delete|void|in|of|def|lambda|pass|with|as|and|or|not|is|None|True|False|null|undefined|true|false|fn|pub|use|struct|impl|match|mut|self|enum|trait|public|private|protected|static|int|float|bool|str|string|number|boolean|print|println|echo|func|package|type)\b)|(\b\d+(?:\.\d+)?\b)/g;
+const KW = "\x1b[38;2;255;45;85m"; // infrared
+const STR = "\x1b[38;2;70;211;105m"; // green
+const NUM = "\x1b[38;2;255;184;74m"; // amber
+const CMT = "\x1b[2m"; // dim
+
+export function highlightCode(text: string): string {
+  if (!useAnsi || !text) return text;
+  return text.replace(CODE_TOKENS, (full, str, cmt, kw, num) => {
+    if (str) return `${STR}${str}\x1b[0m`;
+    if (cmt) return `${CMT}${cmt}\x1b[0m`;
+    if (kw) return `${KW}${kw}\x1b[0m`;
+    if (num) return `${NUM}${num}\x1b[0m`;
+    return full;
+  });
+}
+
 // Decorate a single line, preserving any escape/OSC sequences already in it.
 export function highlight(line: string): string {
   if (!line) return line;
