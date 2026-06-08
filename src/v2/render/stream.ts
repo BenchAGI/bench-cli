@@ -309,6 +309,7 @@ export class StreamRenderer {
         && data.isError === true);
 
     if (phase === "start" || phase === "started") {
+      if (!this.opts.showFullToolOutput) return; // collapsed: no in-progress box (🦅 shows activity)
       const argsSummary = summarizeArgs(data.args);
       println(c.cyan(`┌─ ${name} ${"─".repeat(Math.max(2, termWidth() - name.length - 6))}`));
       if (argsSummary) {
@@ -365,11 +366,23 @@ export class StreamRenderer {
 
     if (phase === "end" || phase === "complete" || phase === "completed" || phase === "result") {
       const result = data.result ?? "";
+      const dur = data.durationMs != null ? ` ${(data.durationMs / 1000).toFixed(1)}s` : "";
+      if (!this.opts.showFullToolOutput) {
+        // collapsed (default): one tight line — ⚙ name · short summary. /expand (or [r]) shows full.
+        const lines = result.length > 0 ? result.split("\n") : [];
+        const summary =
+          lines.length === 0
+            ? "done"
+            : lines.length === 1
+              ? truncate(lines[0]!, Math.max(8, termWidth() - name.length - 12))
+              : `${truncate(lines[0]!, 40)} (+${lines.length - 1} more · /expand)`;
+        println(c.dim("⚙ ") + c.cyan(name) + c.dim(` · ${summary}${dur}`));
+        return;
+      }
       if (result.length > 0) {
         const summary = this.summarizeResult(result);
         println(c.cyan(`│ ${c.dim("result:")} ${summary}`));
       }
-      const dur = data.durationMs != null ? ` ${(data.durationMs / 1000).toFixed(1)}s` : "";
       println(c.cyan(`└─ ${c.dim(`done${dur} · press [r] to expand`)}`));
       return;
     }

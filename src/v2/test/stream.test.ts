@@ -151,8 +151,28 @@ test("Renderer: tool failure detected via phase:'result' + isError:true (real op
   assert.doesNotMatch(all, /press \[r\] to expand/);
 });
 
-test("Renderer: tool result with isError:false renders the success path", () => {
-  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+test("Renderer: tool success renders ONE tight summary line by default (collapsed)", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS); // showFullToolOutput=false
+  const cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: { phase: "start", name: "Read" },
+    });
+    r.renderAgent({
+      runId: "r1", seq: 2, stream: "tool", ts: 0,
+      data: { phase: "result", name: "Read", isError: false, result: "file contents" },
+    });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("\n");
+  assert.match(all, /⚙ Read · file contents/); // tight one-liner
+  assert.doesNotMatch(all, /┌─/); // no in-progress box when collapsed
+  assert.doesNotMatch(all, /press \[r\] to expand/); // box only in expanded mode
+  assert.doesNotMatch(all, /Read failed/);
+});
+
+test("Renderer: expanded mode shows the full tool box with the [r] hint", () => {
+  const r = new StreamRenderer({ ...DEFAULT_RENDERER_OPTIONS, showFullToolOutput: true });
   const cap = captureStdout();
   try {
     r.renderAgent({
@@ -161,9 +181,7 @@ test("Renderer: tool result with isError:false renders the success path", () => 
     });
   } finally { cap.restore(); }
   const all = cap.lines.join("\n");
-  // Success path fires.
   assert.match(all, /press \[r\] to expand/);
-  // Failure header MUST NOT appear.
   assert.doesNotMatch(all, /Read failed/);
 });
 
