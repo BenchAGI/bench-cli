@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Box, Text, render, useApp } from "ink";
 
 import { c, setLogSink, BRAND_HEX } from "../render/ansi.js";
+import { highlight } from "../render/highlight.js";
 import { CLI_VERSION } from "../commands/version.js";
 import type { ChatRunner } from "../chat-runner.js";
 import { parseSlash, findCommand, renderHelp, SLASH_COMMANDS } from "../repl/slash.js";
@@ -127,8 +128,9 @@ export function App(props: TuiProps): JSX.Element {
       store.pushLine(c.dim("(turn still in flight — Ctrl-C to abort before sending another)"));
       return;
     }
-    store.pushLine(""); // blank line → breathing room between turns
+    store.pushLine(""); // blank line above your message
     store.pushLine(c.cyan(`${me}> `) + line); // e.g. "Cory> measure 123 Main"
+    store.pushLine(""); // blank line below it → his reply isn't pressed against yours
     void (async () => {
       sendingRef.current = true;
       setBusy(true);
@@ -234,7 +236,8 @@ export function App(props: TuiProps): JSX.Element {
         {visible.map((line, i) => (
           // Render empty lines as a space so ink gives them height — preserves paragraph breaks
           // (a bare empty <Text> collapses to zero rows and mushes paragraphs together).
-          <Text key={i}>{line.length > 0 ? line : " "}</Text>
+          // highlight() decorates links/code/bold/dates/money (ANSI-aware: existing colors kept).
+          <Text key={i}>{line.length > 0 ? highlight(line) : " "}</Text>
         ))}
       </Box>
       <Working active={busy} runId={runId} note={healthNote} />
