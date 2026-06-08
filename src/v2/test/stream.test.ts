@@ -151,8 +151,57 @@ test("Renderer: tool failure detected via phase:'result' + isError:true (real op
   assert.doesNotMatch(all, /press \[r\] to expand/);
 });
 
-test("Renderer: tool result with isError:false renders the success path", () => {
+test("Renderer: tool success renders ONE tight summary line by default (collapsed)", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS); // showFullToolOutput=false
+  const cap = captureStdout();
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: { phase: "start", name: "Read" },
+    });
+    r.renderAgent({
+      runId: "r1", seq: 2, stream: "tool", ts: 0,
+      data: { phase: "result", name: "Read", isError: false, result: "file contents" },
+    });
+  } finally { cap.restore(); }
+  const all = cap.lines.join("\n");
+  assert.match(all, /⚙ Read · file contents/); // tight one-liner
+  assert.doesNotMatch(all, /┌─/); // no in-progress box when collapsed
+  assert.doesNotMatch(all, /press \[r\] to expand/); // box only in expanded mode
+  assert.doesNotMatch(all, /Read failed/);
+});
+
+test("Renderer: expandLast re-emits the last collapsed tool's full output", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS); // collapsed
+  const cap = captureStdout();
+  let ok = false;
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: { phase: "result", name: "bash", isError: false, result: "line one\nline two\nline three" },
+    });
+    ok = r.expandLast();
+  } finally { cap.restore(); }
+  assert.ok(ok, "expandLast should return true when a collapsed tool exists");
+  const all = cap.lines.join("\n");
+  assert.match(all, /bash \(expanded\)/);
+  assert.match(all, /line two/); // hidden in the collapsed one-liner, revealed on expand
+  assert.match(all, /line three/);
+});
+
+test("Renderer: expandLast returns false with nothing to expand (and after one expand)", () => {
   const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  assert.equal(r.expandLast(), false);
+  const cap = captureStdout();
+  try {
+    r.renderAgent({ runId: "r1", seq: 1, stream: "tool", ts: 0, data: { phase: "result", name: "ls", result: "a\nb" } });
+    assert.equal(r.expandLast(), true);
+    assert.equal(r.expandLast(), false); // only once per tool
+  } finally { cap.restore(); }
+});
+
+test("Renderer: expanded mode shows the full tool box with the [r] hint", () => {
+  const r = new StreamRenderer({ ...DEFAULT_RENDERER_OPTIONS, showFullToolOutput: true });
   const cap = captureStdout();
   try {
     r.renderAgent({
@@ -161,9 +210,7 @@ test("Renderer: tool result with isError:false renders the success path", () => 
     });
   } finally { cap.restore(); }
   const all = cap.lines.join("\n");
-  // Success path fires.
   assert.match(all, /press \[r\] to expand/);
-  // Failure header MUST NOT appear.
   assert.doesNotMatch(all, /Read failed/);
 });
 
@@ -213,7 +260,7 @@ test("Renderer: agent assistant snapshot plus chat snapshot does not double-rend
   assert.doesNotMatch(all, /hellohello/);
 });
 
-test("Renderer: lifecycle end finishes assistant line before run ended", () => {
+test("Renderer: lifecycle end finishes the assistant line (no run marker)", () => {
   const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
   const cap = captureStdout();
   try {
@@ -225,8 +272,8 @@ test("Renderer: lifecycle end finishes assistant line before run ended", () => {
     r.renderChatFinal({ state: "final", message: { content: [{ type: "text", text: "done" }] } });
   } finally { cap.restore(); }
   const all = cap.raw.join("");
-  assert.match(all, /agent> done\n\[run ended\]/);
-  assert.doesNotMatch(all, /done\[run ended\]/);
+  assert.match(all, /agent> done\n/); // line finished with a newline on lifecycle end — not mushed
+  assert.doesNotMatch(all, /\[run ended\]/); // marker removed
   assert.doesNotMatch(all, /donedone/);
 });
 
@@ -248,7 +295,7 @@ test("Renderer: text-only assistant event renders before lifecycle end without f
     });
   } finally { cap.restore(); }
   const all = cap.raw.join("");
-  assert.match(all, /agent> final answer\n\[run ended\]/);
+  assert.match(all, /agent> final answer\n/); // finished line, no run marker
   assert.equal((all.match(/final answer/g) ?? []).length, 1);
 });
 

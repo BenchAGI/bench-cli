@@ -18,6 +18,28 @@ export const c = {
     cyan: (t) => wrap("\x1b[36m", "\x1b[39m", t),
     grey: (t) => wrap("\x1b[90m", "\x1b[39m", t),
 };
+// BenchAGI brand palette — single source of truth (was duplicated in cloud-seat.ts + picker.tsx).
+// Hex for ink (<Text color>); raw truecolor codes + wrappers for hand-built strings (liveness, the
+// readline status line). Wrappers respect NO_COLOR/TTY via the same `useAnsi` gate as `c`.
+export const BRAND_HEX = {
+    infrared: "#ff2d55",
+    copper: "#c47a3a",
+    amber: "#ffb84a",
+    dim: "#7c7c87",
+};
+export const BRAND = {
+    infrared: "\x1b[38;2;255;45;85m",
+    copper: "\x1b[38;2;196;122;58m",
+    amber: "\x1b[38;2;255;184;74m",
+    dim: "\x1b[38;2;124;124;135m",
+    reset: "\x1b[0m",
+};
+export const brand = {
+    ir: (t) => wrap(BRAND.infrared, "\x1b[39m", t),
+    copper: (t) => wrap(BRAND.copper, "\x1b[39m", t),
+    amber: (t) => wrap(BRAND.amber, "\x1b[39m", t),
+    sdim: (t) => wrap(BRAND.dim, "\x1b[39m", t),
+};
 // Cursor control — only effective in TTY mode.
 export const cursor = {
     hide: () => useAnsi && process.stdout.write("\x1b[?25l"),
@@ -32,14 +54,27 @@ export const cursor = {
 export function termWidth() {
     return process.stdout.columns || 80;
 }
+let logSink = null;
+export function setLogSink(sink) {
+    logSink = sink;
+}
 export function println(text = "") {
-    process.stdout.write(`${text}\n`);
+    if (logSink)
+        logSink(`${text}\n`);
+    else
+        process.stdout.write(`${text}\n`);
 }
 export function writeRaw(text) {
-    process.stdout.write(text);
+    if (logSink)
+        logSink(text);
+    else
+        process.stdout.write(text);
 }
 export function eprintln(text = "") {
-    process.stderr.write(`${text}\n`);
+    if (logSink)
+        logSink(`${text}\n`);
+    else
+        process.stderr.write(`${text}\n`);
 }
 // Truncate to N display chars (rough — counts chars, not graphemes).
 export function truncate(text, max) {

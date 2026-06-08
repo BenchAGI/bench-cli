@@ -15,6 +15,8 @@ type Argv = {
   liveness?: Liveness;
   full: boolean;
   noThinking: boolean;
+  classic: boolean;
+  gatewayUrl?: string;
   traceFramesPath?: string;
   positional: string[];
   command?: string;
@@ -52,6 +54,8 @@ export async function run(argv: string[]): Promise<void> {
         liveness: parsed.liveness,
         full: parsed.full,
         noThinking: parsed.noThinking,
+        classic: parsed.classic,
+        gatewayUrl: parsed.gatewayUrl ?? process.env.BENCHAGI_GATEWAY_URL,
         traceFramesPath: parsed.traceFramesPath,
       });
       return;
@@ -69,6 +73,8 @@ export async function run(argv: string[]): Promise<void> {
           liveness: parsed.liveness,
           full: parsed.full,
           noThinking: parsed.noThinking,
+          classic: parsed.classic,
+          gatewayUrl: parsed.gatewayUrl ?? process.env.BENCHAGI_GATEWAY_URL,
           traceFramesPath: parsed.traceFramesPath,
         });
         return;
@@ -79,6 +85,8 @@ export async function run(argv: string[]): Promise<void> {
         liveness: parsed.liveness,
         full: parsed.full,
         noThinking: parsed.noThinking,
+        classic: parsed.classic,
+        gatewayUrl: parsed.gatewayUrl ?? process.env.BENCHAGI_GATEWAY_URL,
         traceFramesPath: parsed.traceFramesPath,
         message: parsed.positional.length > 0 ? parsed.positional.join(" ") : undefined,
       });
@@ -140,6 +148,7 @@ function parseArgs(argv: string[]): Argv {
   const out: Argv = {
     full: false,
     noThinking: false,
+    classic: false,
     positional: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -158,6 +167,18 @@ function parseArgs(argv: string[]): Argv {
     }
     if (arg === "--no-thinking") {
       out.noThinking = true;
+      continue;
+    }
+    if (arg === "--classic") {
+      out.classic = true;
+      continue;
+    }
+    if (arg === "--gateway") {
+      out.gatewayUrl = argv[++i];
+      continue;
+    }
+    if (arg.startsWith("--gateway=")) {
+      out.gatewayUrl = arg.slice("--gateway=".length);
       continue;
     }
     if (arg === "--trace-frames") {
@@ -220,6 +241,8 @@ Flags:
   --liveness <auto|stream|batch|always|off>   liveness indicator override
   --full                   expand all tool output by default
   --no-thinking            hide thinking deltas
+  --classic                use the classic readline REPL (skip the full-screen TUI)
+  --gateway <ws-url>       connect to a specific gateway (e.g. ws://100.64.0.3:18789 — the flyway)
   --trace-frames <path>    append raw gateway WS frames as JSONL
   --help, --version
 `);

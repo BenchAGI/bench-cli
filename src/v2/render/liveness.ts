@@ -13,9 +13,22 @@ export type LivenessConfig = {
   livenessThresholdMs: number;
   unhealthyTickThresholdMs: number;
   stuckRunThresholdMs: number;
+  // Managed mode (the ink TUI): keep tracking the clocks but never paint to stdout — the TUI
+  // renders its own working indicator and reads snapshot() for the status bar.
+  managed?: boolean;
   // For testing: override Date.now() and override stdout.
   now?: () => number;
   writeLine?: (line: string) => void;
+};
+
+// Structured health for the TUI status bar (snapshot of the two clocks + transport state).
+export type LivenessSnapshot = {
+  state: "ok" | "reconnecting" | "unhealthy" | "stuck";
+  runQuietMs: number;
+  gatewayTickMs: number;
+  inFlight: boolean;
+  reconnectAttempt: number | null;
+  reconnectDelayMs: number | null;
 };
 
 export class LivenessIndicator {
@@ -35,10 +48,33 @@ export class LivenessIndicator {
   private reconnectDelayMs: number | null = null;
   private now: () => number;
   private writeLine: (line: string) => void;
+  private managed: boolean;
 
   constructor(private cfg: LivenessConfig) {
     this.now = cfg.now ?? (() => Date.now());
     this.writeLine = cfg.writeLine ?? defaultWriteLine;
+    this.managed = cfg.managed ?? false;
+  }
+
+  // Structured health for the TUI status bar — computed on demand from the clocks (no timer needed).
+  snapshot(): LivenessSnapshot {
+    const now = this.now();
+    const runQuiet = Math.max(0, now - this.lastEvent);
+    const gatewayTick = Math.max(0, now - this.lastTick);
+    const stuck = runQuiet > this.cfg.stuckRunThresholdMs && gatewayTick < 5_000;
+    const unhealthyTick = gatewayTick > this.cfg.unhealthyTickThresholdMs;
+    let state: LivenessSnapshot["state"] = "ok";
+    if (this.reconnectAttempt !== null) state = "reconnecting";
+    else if (this.inFlight && stuck) state = "stuck";
+    else if (unhealthyTick) state = "unhealthy";
+    return {
+      state,
+      runQuietMs: runQuiet,
+      gatewayTickMs: gatewayTick,
+      inFlight: this.inFlight,
+      reconnectAttempt: this.reconnectAttempt,
+      reconnectDelayMs: this.reconnectDelayMs,
+    };
   }
 
   recordEvent(now: number, isTick: boolean): void {
@@ -96,6 +132,7 @@ export class LivenessIndicator {
   }
 
   start(): void {
+    if (this.managed) return; // TUI owns the screen; clocks still advance via record*/setReconnecting
     if (isTTY) {
       this.timer = setInterval(() => this.tick(), 1000);
     } else {
@@ -173,6 +210,7 @@ export class LivenessIndicator {
   }
 
   private show(): void {
+    if (this.managed) return; // never paint in managed mode
     this.visible = true;
     cursor.hide();
     this.repaint();

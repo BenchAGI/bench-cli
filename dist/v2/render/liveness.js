@@ -22,10 +22,35 @@ export class LivenessIndicator {
     reconnectDelayMs = null;
     now;
     writeLine;
+    managed;
     constructor(cfg) {
         this.cfg = cfg;
         this.now = cfg.now ?? (() => Date.now());
         this.writeLine = cfg.writeLine ?? defaultWriteLine;
+        this.managed = cfg.managed ?? false;
+    }
+    // Structured health for the TUI status bar — computed on demand from the clocks (no timer needed).
+    snapshot() {
+        const now = this.now();
+        const runQuiet = Math.max(0, now - this.lastEvent);
+        const gatewayTick = Math.max(0, now - this.lastTick);
+        const stuck = runQuiet > this.cfg.stuckRunThresholdMs && gatewayTick < 5_000;
+        const unhealthyTick = gatewayTick > this.cfg.unhealthyTickThresholdMs;
+        let state = "ok";
+        if (this.reconnectAttempt !== null)
+            state = "reconnecting";
+        else if (this.inFlight && stuck)
+            state = "stuck";
+        else if (unhealthyTick)
+            state = "unhealthy";
+        return {
+            state,
+            runQuietMs: runQuiet,
+            gatewayTickMs: gatewayTick,
+            inFlight: this.inFlight,
+            reconnectAttempt: this.reconnectAttempt,
+            reconnectDelayMs: this.reconnectDelayMs,
+        };
     }
     recordEvent(now, isTick) {
         if (isTick) {
@@ -81,6 +106,8 @@ export class LivenessIndicator {
             this.hide();
     }
     start() {
+        if (this.managed)
+            return; // TUI owns the screen; clocks still advance via record*/setReconnecting
         if (isTTY) {
             this.timer = setInterval(() => this.tick(), 1000);
         }
@@ -159,6 +186,8 @@ export class LivenessIndicator {
             reconnectSuffix);
     }
     show() {
+        if (this.managed)
+            return; // never paint in managed mode
         this.visible = true;
         cursor.hide();
         this.repaint();

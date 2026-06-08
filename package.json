@@ -1,6 +1,6 @@
 {
   "name": "@benchagi/cli",
-  "version": "1.0.0-beta.6",
+  "version": "1.0.0-beta.9",
   "description": "BenchAGI CLI — streaming-aware terminal access to the Bench/OpenClaw agent system. Includes the new `benchagi` binary (V2, native WebSocket streaming) and the legacy `bench` wrapper.",
   "type": "module",
   "bin": {
@@ -24,6 +24,7 @@
     "build:watch": "tsc -p tsconfig.json --watch",
     "test": "node test/smoke.mjs",
     "test:v2": "node --test dist/v2/**/*.test.js",
+    "test:tui": "node scripts/tui-smoke.mjs",
     "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs",
     "prepublishOnly": "npm run build",
     "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: benchagi (V2 streaming) — or the legacy back-compat \\'bench setup\\' readiness check.')\""

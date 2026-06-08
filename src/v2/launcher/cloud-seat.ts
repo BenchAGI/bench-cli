@@ -11,6 +11,7 @@ import { loadState, recordRecent } from "../state/state-file.js";
 import { CLI_VERSION } from "../commands/version.js";
 import { loadAccount } from "./account.js";
 import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
+import { runTui } from "../tui/app.js";
 import type { Liveness } from "../probe/capability.js";
 
 export type AgentLite = { id: string; model?: string };
@@ -61,21 +62,28 @@ export async function singleTurn(runner: ChatRunner, message: string): Promise<v
   println();
 }
 
+// Resolve the logged-in human + access tier for the status surface. Prefers the server-verified
+// profile (user-profile.json), falls back to the local account.json assertion. Shared by the
+// readline status line and the TUI status bar.
+export type SeatIdentity = { who?: string; tierLevel?: string; tierColor?: string };
+export async function resolveSeatIdentity(): Promise<SeatIdentity> {
+  const [account, profile] = await Promise.all([loadAccount().catch(() => null), loadUserProfile().catch(() => null)]);
+  if (profileIsFresh(profile) && profile) {
+    return { who: profile.displayName || profile.email, tierLevel: profile.accessLevel, tierColor: profile.accessColor };
+  }
+  if (account?.user) {
+    const a = account.user;
+    return { who: a.preferredName || a.name || a.email, tierLevel: a.accessLevel, tierColor: a.accessColor };
+  }
+  return {};
+}
+
 export async function replLoop(runner: ChatRunner, agentId: string, model?: string): Promise<void> {
   // Status line above the prompt each turn: the agent you're talking to, the
   // logged-in human + access tier, and a 🔔 when the agent is waiting on you.
-  const [account, profile] = await Promise.all([loadAccount().catch(() => null), loadUserProfile().catch(() => null)]);
-  // Prefer the server-verified profile; fall back to a local account.json assertion.
-  let who: string | undefined;
-  let access = "";
-  if (profileIsFresh(profile) && profile) {
-    who = profile.displayName || profile.email;
-    access = profile.accessLevel ? (profile.accessColor ? `${profile.accessLevel} (${profile.accessColor})` : profile.accessLevel) : "";
-  } else if (account?.user) {
-    const a = account.user;
-    who = a.preferredName || a.name || a.email;
-    access = a.accessLevel ? (a.accessColor ? `${a.accessLevel} (${a.accessColor})` : a.accessLevel) : "";
-  }
+  const ident = await resolveSeatIdentity();
+  const who = ident.who;
+  const access = ident.tierLevel ? (ident.tierColor ? `${ident.tierLevel} (${ident.tierColor})` : ident.tierLevel) : "";
   const ms = shortModel(model);
   const statusLine = (): string => {
     const parts = [`🦅 ${IR}${cap(agentId)}${SRESET}`];
@@ -123,10 +131,32 @@ export interface CloudSeatOpts {
   noThinking?: boolean;
   traceFramesPath?: string;
   message?: string;
+  classic?: boolean; // force the readline REPL even on an interactive TTY
+  gatewayUrl?: string; // override the gateway WS URL (e.g. the flyway: ws://100.64.0.3:18789)
+}
+
+// The premium ink TUI is the default for an interactive TTY. The readline REPL is the fallback for
+// --classic, BENCHAGI_CLASSIC_REPL, and any non-interactive context (pipes, no TTY) — which a
+// full-screen TUI can't serve anyway.
+function shouldUseTui(opts: CloudSeatOpts): boolean {
+  if (opts.message && opts.message.length > 0) return false;
+  if (opts.classic || process.env.BENCHAGI_CLASSIC_REPL) return false;
+  return Boolean(process.stdout.isTTY && process.stdin.isTTY);
+}
+
+async function runTuiSeat(runner: ChatRunner, agent: AgentLite): Promise<void> {
+  const ident = await resolveSeatIdentity();
+  await runTui(runner, {
+    agentId: agent.id,
+    model: shortModel(agent.model),
+    tier: ident.tierLevel ? { level: ident.tierLevel, color: ident.tierColor } : undefined,
+    who: ident.who,
+  });
 }
 
 export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts = {}): Promise<void> {
   const agent = await locateAgent(agentId);
+  const useTui = shouldUseTui(opts);
   const runner = new ChatRunner({
     agentId: agent.id,
     modelPrimary: agent.model,
@@ -134,12 +164,17 @@ export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts =
     showFullToolOutput: Boolean(opts.full),
     showThinking: !opts.noThinking,
     traceFramesPath: opts.traceFramesPath,
+    tui: useTui,
+    assistantLabel: cap(agent.id), // "Aurelius>" instead of "agent>"
+    gatewayUrl: opts.gatewayUrl,
   });
   try {
     await runner.connect();
     await recordRecent(agent.id);
     if (opts.message && opts.message.length > 0) {
       await singleTurn(runner, opts.message);
+    } else if (useTui) {
+      await runTuiSeat(runner, agent);
     } else {
       await replLoop(runner, agent.id, agent.model);
     }
