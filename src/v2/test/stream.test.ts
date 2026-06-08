@@ -171,6 +171,35 @@ test("Renderer: tool success renders ONE tight summary line by default (collapse
   assert.doesNotMatch(all, /Read failed/);
 });
 
+test("Renderer: expandLast re-emits the last collapsed tool's full output", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS); // collapsed
+  const cap = captureStdout();
+  let ok = false;
+  try {
+    r.renderAgent({
+      runId: "r1", seq: 1, stream: "tool", ts: 0,
+      data: { phase: "result", name: "bash", isError: false, result: "line one\nline two\nline three" },
+    });
+    ok = r.expandLast();
+  } finally { cap.restore(); }
+  assert.ok(ok, "expandLast should return true when a collapsed tool exists");
+  const all = cap.lines.join("\n");
+  assert.match(all, /bash \(expanded\)/);
+  assert.match(all, /line two/); // hidden in the collapsed one-liner, revealed on expand
+  assert.match(all, /line three/);
+});
+
+test("Renderer: expandLast returns false with nothing to expand (and after one expand)", () => {
+  const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
+  assert.equal(r.expandLast(), false);
+  const cap = captureStdout();
+  try {
+    r.renderAgent({ runId: "r1", seq: 1, stream: "tool", ts: 0, data: { phase: "result", name: "ls", result: "a\nb" } });
+    assert.equal(r.expandLast(), true);
+    assert.equal(r.expandLast(), false); // only once per tool
+  } finally { cap.restore(); }
+});
+
 test("Renderer: expanded mode shows the full tool box with the [r] hint", () => {
   const r = new StreamRenderer({ ...DEFAULT_RENDERER_OPTIONS, showFullToolOutput: true });
   const cap = captureStdout();

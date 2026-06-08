@@ -32,6 +32,7 @@ export class StreamRenderer {
   private thinkingOpen = false; // a 💭 reasoning block is mid-stream
   private thinkingMarkedThisRun = false; // collapsed-mode marker already emitted this run
   private assistantLabel: string;
+  private lastTool: { name: string; result: string } | null = null; // last collapsed tool, for Ctrl+O
 
   constructor(private opts: RendererOptions = DEFAULT_RENDERER_OPTIONS) {
     this.thinkingMode = opts.showThinking ? "on" : "off";
@@ -53,6 +54,21 @@ export class StreamRenderer {
   /** Read-only view of the current thinking mode. */
   getThinking(): ThinkingMode {
     return this.thinkingMode;
+  }
+
+  /** Re-emit the last collapsed tool's full output below the conversation (bound to Ctrl+O). */
+  expandLast(): boolean {
+    if (!this.lastTool || this.lastTool.result.length === 0) return false;
+    const { name, result } = this.lastTool;
+    this.lastTool = null; // one expansion per tool
+    this.finishAssistantLine();
+    const w = termWidth();
+    println(c.cyan(`┌─ ${name} (expanded) ${"─".repeat(Math.max(2, w - name.length - 16))}`));
+    const all = result.split("\n");
+    for (const line of all.slice(0, 300)) println(c.cyan("│ ") + truncate(line, w - 2));
+    if (all.length > 300) println(c.dim(`│ … (${all.length - 300} more lines)`));
+    println(c.cyan("└─"));
+    return true;
   }
 
   /**
@@ -377,6 +393,7 @@ export class StreamRenderer {
               ? truncate(lines[0]!, Math.max(8, termWidth() - name.length - 12))
               : `${truncate(lines[0]!, 40)} (+${lines.length - 1} more · /expand)`;
         println(c.dim("⚙ ") + c.cyan(name) + c.dim(` · ${summary}${dur}`));
+        this.lastTool = result.length > 0 ? { name, result } : null; // remember for Ctrl+O expand
         return;
       }
       if (result.length > 0) {

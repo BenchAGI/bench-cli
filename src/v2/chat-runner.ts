@@ -578,6 +578,11 @@ export class ChatRunner {
     return this.renderer.isFullOutput();
   }
 
+  /** Expand the last collapsed tool's full output inline (Ctrl+O). Returns true if there was one. */
+  expandLastTool(): boolean {
+    return this.renderer.expandLast();
+  }
+
   /** The model this session is running on (the /model override, else the launch default). */
   currentModel(): string {
     return this.modelOverride ?? this.opts.modelPrimary ?? "";

@@ -273,9 +273,14 @@ export function App(props: TuiProps): JSX.Element {
 
   // PgUp/PgDn scroll the history. (App-level useInput coexists with the input editor's; neither
   // consumes the other's keys — PgUp/PgDn aren't printable and the editor ignores them.)
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.pageUp) setScroll(() => Math.min(maxScroll, sc + pageStep));
     else if (key.pageDown) setScroll(() => Math.max(0, sc - pageStep));
+    else if (key.ctrl && input === "o") {
+      // Ctrl+O: expand the last collapsed tool's full output inline.
+      if (runner.expandLastTool()) setScroll(0); // snap to bottom to see it
+      else store.pushLine(c.dim("(nothing to expand)"));
+    }
   });
 
   // While scrolled up, keep the viewport anchored to the same content as new lines commit below.
