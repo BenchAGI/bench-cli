@@ -65,6 +65,10 @@ try {
   await new Promise((r) => setTimeout(r, 300));
   stdin.emit("data", "/he"); // should surface live hints
   await new Promise((r) => setTimeout(r, 120));
+  // Push a line AFTER mount — this is the case the <Static> immutable-append fix must satisfy
+  // (the original mutate-in-place store made post-mount lines invisible; smoke must catch that).
+  store.pushLine("after-mount-canary-12345");
+  await new Promise((r) => setTimeout(r, 120));
   app.unmount();
   await new Promise((r) => setTimeout(r, 50));
 } catch (err) {
@@ -73,7 +77,8 @@ try {
 
 const out = chunks.join("");
 const checks = [
-  ["banner/buffer line", /hello from the buffer/],
+  ["banner/buffer line (pre-mount)", /hello from the buffer/],
+  ["committed line AFTER mount (Static fix)", /after-mount-canary-12345/],
   ["status bar agent", /Aurelius/],
   ["status bar tier", /Legendary/],
   ["status bar model", /Opus 4\.8/],

@@ -23,6 +23,7 @@ export type TuiProps = {
   model?: string; // already shortened, e.g. "Opus 4.8"
   tier?: { level: string; color?: string };
   who?: string;
+  clearScreen?: () => void; // wipes the rendered frame (ink instance clear) — for /clear
 };
 
 const POLL_MS = 250;
@@ -37,7 +38,7 @@ export function App(props: TuiProps): JSX.Element {
 
   // Output buffer (external store) → committed lines + live pending region.
   useSyncExternalStore(store.subscribe, store.getVersion);
-  const { lines, pending } = store.snapshot();
+  const { lines, pending, generation } = store.snapshot();
 
   // Live runtime state, polled from the runner (no event-emitter refactor needed).
   const [busy, setBusy] = useState(false);
@@ -89,9 +90,14 @@ export function App(props: TuiProps): JSX.Element {
       void handleSlash(parsed.name, parsed.args);
       return;
     }
+    // Guard BEFORE echoing — the runner rejects a second concurrent send, so echoing first would
+    // print `you> …` and then silently drop the message (review finding #3/#5).
+    if (sendingRef.current || runner.isInFlight()) {
+      store.pushLine(c.dim("(turn still in flight — Ctrl-C to abort before sending another)"));
+      return;
+    }
     store.pushLine(c.cyan(`you> ${line}`));
     void (async () => {
-      if (sendingRef.current) return;
       sendingRef.current = true;
       setBusy(true);
       try {
@@ -140,7 +146,8 @@ export function App(props: TuiProps): JSX.Element {
         break;
       }
       case "clear":
-        store.clear();
+        store.clear(); // remounts <Static> empty (generation bump)
+        props.clearScreen?.(); // wipe the rendered frame too
         break;
       case "switch":
         if (args[0]) {
@@ -174,12 +181,15 @@ export function App(props: TuiProps): JSX.Element {
 
   return (
     <Box flexDirection="column">
-      <Static items={lines}>{(line, i) => <Text key={i}>{line}</Text>}</Static>
+      <Static key={generation} items={lines}>
+        {(line, i) => <Text key={i}>{line}</Text>}
+      </Static>
       {pending.length > 0 ? <Text>{pending}</Text> : null}
       <Working active={busy} runId={runId} note={healthNote} />
       <Input
         busy={busy}
         approvalActive={approval}
+        canConsumeKey={(key) => runner.canHandleApprovalKey(key)}
         registry={SLASH_COMMANDS}
         onSubmit={handleSubmit}
         onApproval={(key) => void runner.handleApprovalKey(key)}
@@ -213,8 +223,14 @@ export async function runTui(runner: ChatRunner, props: Omit<TuiProps, "store" |
   const store = new LogStore();
   store.pushLine(c.dim(`benchagi ${CLI_VERSION} · 🦅 type a message, /help for commands, /exit to quit`));
   setLogSink(store.write);
+  // Holder so /clear can reach ink's instance.clear() (the instance doesn't exist until render()).
+  let clearScreen = (): void => {};
   try {
-    const app = render(<App runner={runner} store={store} {...props} />, { exitOnCtrlC: false });
+    const app = render(
+      <App runner={runner} store={store} {...props} clearScreen={() => clearScreen()} />,
+      { exitOnCtrlC: false },
+    );
+    clearScreen = () => app.clear();
     await app.waitUntilExit();
   } finally {
     setLogSink(null);

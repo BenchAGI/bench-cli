@@ -11,6 +11,7 @@ import { initInput, reduceInput, type InputState } from "./input-model.js";
 export function Input({
   busy,
   approvalActive,
+  canConsumeKey,
   registry = SLASH_COMMANDS,
   initialHistory = [],
   onSubmit,
@@ -20,6 +21,10 @@ export function Input({
 }: {
   busy: boolean;
   approvalActive: boolean;
+  // Synchronous, live predicate (queries the runner at keypress time) for whether a key should be
+  // consumed as an approval action. Mirrors the readline canConsumeKey race-fix; avoids the staleness
+  // of the 250ms-polled approvalActive snapshot.
+  canConsumeKey?: (key: string) => boolean;
   registry?: readonly SlashCommand[];
   initialHistory?: string[];
   onSubmit: (line: string) => void;
@@ -36,7 +41,15 @@ export function Input({
       else onExit();
       return;
     }
-    const { state: next, action } = reduceInput(state, input, key, { approvalActive, registry });
+    // Live approval-key gate (synchronous, fresh): consume a/d/r only with an empty buffer so a
+    // half-typed message keeps them as literal text. Decided live, not from the polled snapshot.
+    if (state.buffer.length === 0 && input && !key.ctrl && !key.meta && canConsumeKey?.(input)) {
+      onApproval(input);
+      return;
+    }
+    // The reducer's own approvalActive gate is left off here (we just handled it live) to avoid a
+    // stale-snapshot double-fire; the reducer gate stays unit-tested for its own correctness.
+    const { state: next, action } = reduceInput(state, input, key, { approvalActive: false, registry });
     if (action.type === "submit") onSubmit(action.line);
     else if (action.type === "approval") onApproval(action.key);
     setState(next);
