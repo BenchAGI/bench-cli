@@ -15,7 +15,8 @@ import type { ThinkingMode } from "../render/stream.js";
 import { LogStore } from "./log-store.js";
 import { StatusBar, type HealthState } from "./status-bar.js";
 import { Working } from "./working.js";
-import { Input } from "./input.js";
+import { Input, slashMenuRows } from "./input.js";
+import { initInput, type InputState } from "./input-model.js";
 
 export type TuiProps = {
   runner: ChatRunner;
@@ -94,6 +95,7 @@ export function App(props: TuiProps): JSX.Element {
   const [width, setWidth] = useState(termCols());
   const [height, setHeight] = useState(termRows());
   const [scroll, setScroll] = useState(0); // lines scrolled up from the live bottom (0 = following)
+  const [istate, setIstate] = useState<InputState>(() => initInput()); // lifted so layout fits the menu
 
   useEffect(() => {
     const tick = (): void => {
@@ -262,7 +264,8 @@ export function App(props: TuiProps): JSX.Element {
   // Bottom-anchored: the framed text area fills the screen and the conversation emerges from just
   // above the input. Show the lines that fit; older lines scroll off the top (PgUp to reveal).
   const items = pending.length > 0 ? lines.concat(pending) : lines;
-  const budget = Math.max(3, height - 7); // reserve: 2 brake lines + working + input(+hint) + status(2)
+  const menuRows = slashMenuRows(istate.buffer, SLASH_COMMANDS); // shrink the viewport to fit the slash menu
+  const budget = Math.max(3, height - 7 - menuRows); // reserve: 2 brake lines + working + input + status(2) + menu
   const maxScroll = Math.max(0, items.length - budget);
   const sc = Math.min(scroll, maxScroll); // clamped so the viewport never goes blank
   const pageStep = Math.max(1, budget - 2);
@@ -309,6 +312,8 @@ export function App(props: TuiProps): JSX.Element {
       ) : null}
       <Working active={busy} runId={runId} note={healthNote} />
       <Input
+        state={istate}
+        onChange={setIstate}
         busy={busy}
         approvalActive={approval}
         // Only consume a/d/r as control keys while a run is in flight (mirrors the readline `busy`
