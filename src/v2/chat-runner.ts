@@ -39,6 +39,7 @@ export class ChatRunner {
   private liveness!: LivenessIndicator;
   private approval!: ApprovalState;
   private sessionKey: string | null = null;
+  private modelOverride: string | null = null; // set by /model over the flyway (sessions.patch)
   private currentRunId: string | null = null;
   private activeRunIds = new Set<string>();
   private completedRuns = new Map<string, "final" | "aborted" | "error">();
@@ -577,12 +578,61 @@ export class ChatRunner {
     return this.renderer.isFullOutput();
   }
 
+  /** The model this session is running on (the /model override, else the launch default). */
+  currentModel(): string {
+    return this.modelOverride ?? this.opts.modelPrimary ?? "";
+  }
+
+  /**
+   * Set the session's model over the flyway (sessions.patch {model}). The gateway validates against
+   * the agent's allowed models and rejects an unknown one. Returns true on success.
+   */
+  async setModel(model: string): Promise<boolean> {
+    this.modelOverride = model; // applied at session-create (works without elevated scope)
+    if (!this.sessionKey) return true; // no session yet → takes effect on your first message
+    return this.patchSession({ model }); // existing session → sessions.patch (operator.admin gated)
+  }
+
+  /**
+   * Set the agent's thinking/reasoning level (sessions.patch {thinkingLevel}). Only possible once a
+   * session exists, and the gateway gates it behind operator.admin — so over a normal flyway seat
+   * this is effectively a Flyway·deep feature. Valid: off·minimal·low·medium·high·xhigh·max.
+   */
+  async setThinkingLevel(level: string): Promise<boolean> {
+    if (!this.sessionKey) return false; // sessions.create can't carry thinkingLevel
+    return this.patchSession({ thinkingLevel: level });
+  }
+
+  // True once a server session exists (after the first message). Lets the UI know whether a model
+  // change can still be applied at create-time vs needs the (scope-gated) patch path.
+  hasSession(): boolean {
+    return this.sessionKey != null;
+  }
+
+  // Patch the current session. sessions.patch accepts model/thinkingLevel but the gateway requires
+  // operator.admin to apply them — absent on a normal flyway seat, so we swallow that specific error
+  // and let the caller show clean guidance.
+  private async patchSession(patch: Record<string, unknown>): Promise<boolean> {
+    if (!this.connected || !this.sessionKey) return false;
+    try {
+      await this.transport.request("sessions.patch", { key: this.sessionKey, ...patch });
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/operator\.admin/i.test(msg)) eprintln(c.red(`session update failed: ${msg}`));
+      return false;
+    }
+  }
+
   private async ensureSession(): Promise<void> {
     // ANVIL-3 P1 fix: SessionsCreateParamsSchema rejects `verboseLevel` as an
     // additional property. Create with only allowed fields, then assert
     // verboseLevel via sessions.patch (SPEC §5.3).
     const resp = await this.transport
-      .request("sessions.create", { agentId: this.opts.agentId })
+      .request("sessions.create", {
+        agentId: this.opts.agentId,
+        ...(this.modelOverride ? { model: this.modelOverride } : {}), // /model takes effect at create
+      })
       .catch(() => null);
     const key = (resp as { key?: string; sessionKey?: string } | null)?.key
       ?? (resp as { key?: string; sessionKey?: string } | null)?.sessionKey;

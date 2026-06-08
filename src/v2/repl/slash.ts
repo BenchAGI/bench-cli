@@ -30,7 +30,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "interrupt", aliases: ["stop"], summary: "Interrupt the current run" },
   { name: "clear", summary: "Clear the screen (keeps the server session)" },
   { name: "switch", aliases: ["agent"], usage: "/switch <agent>", summary: "Switch agent (/agent lists)" },
-  { name: "model", summary: "Show the current model (read-only)" },
+  { name: "model", usage: "/model [id]", summary: "Show or switch the model (default Opus 4.8)" },
+  {
+    name: "effort",
+    usage: "/effort [off|minimal|low|medium|high|xhigh|max]",
+    summary: "Set the agent's thinking level",
+  },
   { name: "exit", aliases: ["quit"], summary: "Leave the chat" },
 ];
 

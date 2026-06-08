@@ -58,8 +58,21 @@ function visibleTail(items: string[], cols: number, budgetRows: number, scroll =
   return out;
 }
 
+const MODEL_SHORT: Record<string, string> = {
+  "claude-opus-4-8": "Opus 4.8",
+  "claude-opus-4-6": "Opus 4.6",
+  "claude-sonnet-4-6": "Sonnet 4.6",
+  "claude-haiku-4-5": "Haiku 4.5",
+};
+function shortenModel(m: string): string {
+  const k = m.replace(/^anthropic\//, "");
+  return MODEL_SHORT[k] ?? m;
+}
+const THINK_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 export function App(props: TuiProps): JSX.Element {
-  const { runner, store, agentId, model, tier } = props;
+  const { runner, store, agentId, tier } = props;
+  const [model, setModelState] = useState(props.model); // mutable via /model over the flyway
   const { exit } = useApp();
 
   // Who's typing — the user's first name (falls back to "you").
@@ -194,9 +207,38 @@ export function App(props: TuiProps): JSX.Element {
           store.pushLine(c.dim("(usage: /switch <agent> — relaunches the seat; hot-swap is coming)"));
         }
         break;
-      case "model":
-        store.pushLine(c.dim(`(model: ${model ?? "default"} — read-only; no mid-session model change)`));
+      case "model": {
+        if (args[0]) {
+          const ok = await runner.setModel(args[0]);
+          if (ok) {
+            setModelState(shortenModel(args[0]));
+            store.pushLine(c.dim(`(model → ${args[0]}${runner.hasSession() ? "" : " — applies to this chat"})`));
+          } else {
+            store.pushLine(c.dim("(can't switch model mid-chat over the flyway — set /model before your first message, or use Flyway·deep)"));
+          }
+        } else {
+          store.pushLine(c.dim(`(model: ${shortenModel(runner.currentModel() || "default")} — /model <id> to switch, before your first message)`));
+        }
         break;
+      }
+      case "effort": {
+        const lvl = (args[0] ?? "").toLowerCase();
+        if (!lvl) {
+          store.pushLine(c.dim(`(thinking level — usage: /effort <${THINK_LEVELS.join("|")}>)`));
+          break;
+        }
+        if (!THINK_LEVELS.includes(lvl)) {
+          store.pushLine(c.dim(`(unknown level '${lvl}' — try: ${THINK_LEVELS.join(", ")})`));
+          break;
+        }
+        const ok = await runner.setThinkingLevel(lvl);
+        store.pushLine(
+          ok
+            ? c.dim(`(thinking level → ${lvl})`)
+            : c.dim("(thinking level is the brain's default over the flyway — use Flyway·deep for /effort control)"),
+        );
+        break;
+      }
       case "exit":
         cleanupAndExit();
         break;
