@@ -12,7 +12,9 @@
 export type LogState = { lines: string[]; pending: string; generation: number };
 
 // Append-only by design; the cap is a high safety backstop, not a normal-operation limit (the
-// terminal's own scrollback holds history). Crossing it triggers a one-time generation remount.
+// terminal's own scrollback holds history). Crossing it trims to the most-recent HALF and remounts
+// <Static> (generation bump) — the half-trim adds hysteresis so the remount/reprint happens only
+// ~once per cap/2 lines, not on every commit once full (amortized O(1) per line).
 const DEFAULT_CAP = 50_000;
 // Bound the live pending region: a pathologically long line with no newline would otherwise
 // re-render O(n) on every sink write. Flush it to a committed chunk past this size.
@@ -43,7 +45,10 @@ export class LogStore {
     if (toCommit.length > 0) {
       this.lines = this.lines.concat(toCommit); // new identity → <Static> renders the new tail
       if (this.lines.length > this.cap) {
-        this.lines = this.lines.slice(-this.cap); // never front-trim in place; remount instead
+        // Keep the recent half + remount (never front-trim in place — that corrupts Static's
+        // absolute index). Trimming to HALF (not exactly cap) is the hysteresis that keeps the
+        // remount rare; without it, a full buffer would remount on every single subsequent line.
+        this.lines = this.lines.slice(-Math.max(1, Math.floor(this.cap / 2))); // max(1,…): slice(-0) would keep all
         this.generation += 1;
       }
     }

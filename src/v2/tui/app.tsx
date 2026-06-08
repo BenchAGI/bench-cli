@@ -189,7 +189,10 @@ export function App(props: TuiProps): JSX.Element {
       <Input
         busy={busy}
         approvalActive={approval}
-        canConsumeKey={(key) => runner.canHandleApprovalKey(key)}
+        // Only consume a/d/r as control keys while a run is in flight (mirrors the readline `busy`
+        // guard in prompt.ts) — otherwise 'r' (expand toggle) would eat the first letter of an idle
+        // message like "roof"/"remove". Live isInFlight() check, no 250ms-polled staleness.
+        canConsumeKey={(key) => runner.isInFlight() && runner.canHandleApprovalKey(key)}
         registry={SLASH_COMMANDS}
         onSubmit={handleSubmit}
         onApproval={(key) => void runner.handleApprovalKey(key)}

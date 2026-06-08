@@ -86,10 +86,19 @@ test("subscribe fires on change and version increments", () => {
   assert.equal(hits, 2); // no more callbacks after unsubscribe
 });
 
-test("line buffer is capped", () => {
-  const s = new LogStore(3);
-  for (let i = 0; i < 10; i++) s.write(`L${i}\n`);
-  const { lines } = s.snapshot();
-  assert.equal(lines.length, 3);
-  assert.deepEqual(lines, ["L7", "L8", "L9"]);
+test("line buffer is capped with half-trim hysteresis + bumps generation", () => {
+  const s = new LogStore(10);
+  for (let i = 0; i < 30; i++) s.write(`L${i}\n`);
+  const { lines, generation } = s.snapshot();
+  assert.ok(lines.length <= 10, `expected <= cap(10), got ${lines.length}`);
+  assert.equal(lines[lines.length - 1], "L29", "most recent line retained");
+  assert.ok(generation > 0, "cap-trim must bump generation to remount <Static>");
+});
+
+test("a full buffer does NOT remount on every single line (hysteresis)", () => {
+  const s = new LogStore(10);
+  for (let i = 0; i < 11; i++) s.write(`L${i}\n`); // cross the cap once → one trim
+  const g1 = s.snapshot().generation;
+  s.write("next\n"); // within the post-trim slack → must NOT trim/remount again
+  assert.equal(s.snapshot().generation, g1, "no remount while under cap after a trim");
 });
