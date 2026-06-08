@@ -213,7 +213,7 @@ test("Renderer: agent assistant snapshot plus chat snapshot does not double-rend
   assert.doesNotMatch(all, /hellohello/);
 });
 
-test("Renderer: lifecycle end finishes assistant line before run ended", () => {
+test("Renderer: lifecycle end finishes the assistant line (no run marker)", () => {
   const r = new StreamRenderer(DEFAULT_RENDERER_OPTIONS);
   const cap = captureStdout();
   try {
@@ -225,8 +225,8 @@ test("Renderer: lifecycle end finishes assistant line before run ended", () => {
     r.renderChatFinal({ state: "final", message: { content: [{ type: "text", text: "done" }] } });
   } finally { cap.restore(); }
   const all = cap.raw.join("");
-  assert.match(all, /agent> done\n\[run ended\]/);
-  assert.doesNotMatch(all, /done\[run ended\]/);
+  assert.match(all, /agent> done\n/); // line finished with a newline on lifecycle end — not mushed
+  assert.doesNotMatch(all, /\[run ended\]/); // marker removed
   assert.doesNotMatch(all, /donedone/);
 });
 
@@ -248,7 +248,7 @@ test("Renderer: text-only assistant event renders before lifecycle end without f
     });
   } finally { cap.restore(); }
   const all = cap.raw.join("");
-  assert.match(all, /agent> final answer\n\[run ended\]/);
+  assert.match(all, /agent> final answer\n/); // finished line, no run marker
   assert.equal((all.match(/final answer/g) ?? []).length, 1);
 });
 

@@ -169,11 +169,11 @@ export class StreamRenderer {
       this.currentAssistantText = "";
       this.thinkingOpen = false;
       this.thinkingMarkedThisRun = false;
-      println(c.dim(`[run started · ${data?.runId ?? p.runId}]`));
+      // No "[run started · <id>]" marker — the Aurelius> label is the turn boundary.
     } else if (phase === "end" || phase === "ended" || phase === "complete") {
       this.closeThinking();
       this.finishAssistantLine();
-      println(c.dim(`[run ended]`));
+      // No "[run ended]" marker; turn spacing is handled by the TUI.
     }
     // Other phases ignored.
   }

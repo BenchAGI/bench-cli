@@ -127,6 +127,7 @@ export function App(props: TuiProps): JSX.Element {
       store.pushLine(c.dim("(turn still in flight — Ctrl-C to abort before sending another)"));
       return;
     }
+    store.pushLine(""); // blank line → breathing room between turns
     store.pushLine(c.cyan(`${me}> `) + line); // e.g. "Cory> measure 123 Main"
     void (async () => {
       sendingRef.current = true;
@@ -231,7 +232,9 @@ export function App(props: TuiProps): JSX.Element {
         paddingX={1}
       >
         {visible.map((line, i) => (
-          <Text key={i}>{line}</Text>
+          // Render empty lines as a space so ink gives them height — preserves paragraph breaks
+          // (a bare empty <Text> collapses to zero rows and mushes paragraphs together).
+          <Text key={i}>{line.length > 0 ? line : " "}</Text>
         ))}
       </Box>
       <Working active={busy} runId={runId} note={healthNote} />
