@@ -132,6 +132,7 @@ export interface CloudSeatOpts {
   traceFramesPath?: string;
   message?: string;
   classic?: boolean; // force the readline REPL even on an interactive TTY
+  gatewayUrl?: string; // override the gateway WS URL (e.g. the flyway: ws://100.64.0.3:18789)
 }
 
 // The premium ink TUI is the default for an interactive TTY. The readline REPL is the fallback for
@@ -165,6 +166,7 @@ export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts =
     traceFramesPath: opts.traceFramesPath,
     tui: useTui,
     assistantLabel: cap(agent.id), // "Aurelius>" instead of "agent>"
+    gatewayUrl: opts.gatewayUrl,
   });
   try {
     await runner.connect();

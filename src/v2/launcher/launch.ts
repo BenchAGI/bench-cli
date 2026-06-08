@@ -20,6 +20,7 @@ export interface LaunchOpts {
   full?: boolean;
   noThinking?: boolean;
   classic?: boolean;
+  gatewayUrl?: string;
   traceFramesPath?: string;
 }
 
