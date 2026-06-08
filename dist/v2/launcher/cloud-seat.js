@@ -10,6 +10,7 @@ import { loadState, recordRecent } from "../state/state-file.js";
 import { CLI_VERSION } from "../commands/version.js";
 import { loadAccount } from "./account.js";
 import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
+import { runTui } from "../tui/app.js";
 // Branded ANSI for the cloud REPL status line (matches the local seat status line).
 const IR = "\x1b[38;2;255;45;85m";
 const COPPER = "\x1b[38;2;196;122;58m";
@@ -54,22 +55,23 @@ export async function singleTurn(runner, message) {
     }
     println();
 }
+export async function resolveSeatIdentity() {
+    const [account, profile] = await Promise.all([loadAccount().catch(() => null), loadUserProfile().catch(() => null)]);
+    if (profileIsFresh(profile) && profile) {
+        return { who: profile.displayName || profile.email, tierLevel: profile.accessLevel, tierColor: profile.accessColor };
+    }
+    if (account?.user) {
+        const a = account.user;
+        return { who: a.preferredName || a.name || a.email, tierLevel: a.accessLevel, tierColor: a.accessColor };
+    }
+    return {};
+}
 export async function replLoop(runner, agentId, model) {
     // Status line above the prompt each turn: the agent you're talking to, the
     // logged-in human + access tier, and a 🔔 when the agent is waiting on you.
-    const [account, profile] = await Promise.all([loadAccount().catch(() => null), loadUserProfile().catch(() => null)]);
-    // Prefer the server-verified profile; fall back to a local account.json assertion.
-    let who;
-    let access = "";
-    if (profileIsFresh(profile) && profile) {
-        who = profile.displayName || profile.email;
-        access = profile.accessLevel ? (profile.accessColor ? `${profile.accessLevel} (${profile.accessColor})` : profile.accessLevel) : "";
-    }
-    else if (account?.user) {
-        const a = account.user;
-        who = a.preferredName || a.name || a.email;
-        access = a.accessLevel ? (a.accessColor ? `${a.accessLevel} (${a.accessColor})` : a.accessLevel) : "";
-    }
+    const ident = await resolveSeatIdentity();
+    const who = ident.who;
+    const access = ident.tierLevel ? (ident.tierColor ? `${ident.tierLevel} (${ident.tierColor})` : ident.tierLevel) : "";
     const ms = shortModel(model);
     const statusLine = () => {
         const parts = [`🦅 ${IR}${cap(agentId)}${SRESET}`];
@@ -109,8 +111,28 @@ export async function replLoop(runner, agentId, model) {
         void repl.start();
     });
 }
+// The premium ink TUI is the default for an interactive TTY. The readline REPL is the fallback for
+// --classic, BENCHAGI_CLASSIC_REPL, and any non-interactive context (pipes, no TTY) — which a
+// full-screen TUI can't serve anyway.
+function shouldUseTui(opts) {
+    if (opts.message && opts.message.length > 0)
+        return false;
+    if (opts.classic || process.env.BENCHAGI_CLASSIC_REPL)
+        return false;
+    return Boolean(process.stdout.isTTY && process.stdin.isTTY);
+}
+async function runTuiSeat(runner, agent) {
+    const ident = await resolveSeatIdentity();
+    await runTui(runner, {
+        agentId: agent.id,
+        model: shortModel(agent.model),
+        tier: ident.tierLevel ? { level: ident.tierLevel, color: ident.tierColor } : undefined,
+        who: ident.who,
+    });
+}
 export async function runCloudSeat(agentId, opts = {}) {
     const agent = await locateAgent(agentId);
+    const useTui = shouldUseTui(opts);
     const runner = new ChatRunner({
         agentId: agent.id,
         modelPrimary: agent.model,
@@ -118,12 +140,18 @@ export async function runCloudSeat(agentId, opts = {}) {
         showFullToolOutput: Boolean(opts.full),
         showThinking: !opts.noThinking,
         traceFramesPath: opts.traceFramesPath,
+        tui: useTui,
+        assistantLabel: cap(agent.id), // "Aurelius>" instead of "agent>"
+        gatewayUrl: opts.gatewayUrl,
     });
     try {
         await runner.connect();
         await recordRecent(agent.id);
         if (opts.message && opts.message.length > 0) {
             await singleTurn(runner, opts.message);
+        }
+        else if (useTui) {
+            await runTuiSeat(runner, agent);
         }
         else {
             await replLoop(runner, agent.id, agent.model);

@@ -1,7 +1,7 @@
 // Per-stream renderers for AgentEventPayload — SPEC §6.3.
 // Pure functions: input event payload → output strings. No global state
 // here so tests can snapshot deterministically.
-import { c, println, termWidth, truncate } from "./ansi.js";
+import { c, brand, println, termWidth, truncate, writeRaw } from "./ansi.js";
 export const DEFAULT_RENDERER_OPTIONS = {
     showThinking: true,
     showFullToolOutput: false,
@@ -12,8 +12,50 @@ export class StreamRenderer {
     opts;
     currentAssistantHasContent = false;
     currentAssistantText = "";
+    // Thinking presentation: "on" streams reasoning under a branded 💭 gutter; "off" suppresses it;
+    // "collapsed" hides the text but drops a single 💭 marker per run so you know it reasoned.
+    thinkingMode;
+    thinkingOpen = false; // a 💭 reasoning block is mid-stream
+    thinkingMarkedThisRun = false; // collapsed-mode marker already emitted this run
+    assistantLabel;
+    lastTool = null; // last collapsed tool, for Ctrl+O
     constructor(opts = DEFAULT_RENDERER_OPTIONS) {
         this.opts = opts;
+        this.thinkingMode = opts.showThinking ? "on" : "off";
+        this.assistantLabel = opts.assistantLabel ?? "agent";
+    }
+    /** Set the label shown before assistant output (e.g. the agent's display name). */
+    setAssistantLabel(name) {
+        if (name && name.trim().length > 0)
+            this.assistantLabel = name.trim();
+    }
+    /** Set the thinking presentation mode (bound to /thinking). Returns the new mode. */
+    setThinking(mode) {
+        if (mode !== "on")
+            this.closeThinking();
+        this.thinkingMode = mode;
+        return this.thinkingMode;
+    }
+    /** Read-only view of the current thinking mode. */
+    getThinking() {
+        return this.thinkingMode;
+    }
+    /** Re-emit the last collapsed tool's full output below the conversation (bound to Ctrl+O). */
+    expandLast() {
+        if (!this.lastTool || this.lastTool.result.length === 0)
+            return false;
+        const { name, result } = this.lastTool;
+        this.lastTool = null; // one expansion per tool
+        this.finishAssistantLine();
+        const w = termWidth();
+        println(c.cyan(`┌─ ${name} (expanded) ${"─".repeat(Math.max(2, w - name.length - 16))}`));
+        const all = result.split("\n");
+        for (const line of all.slice(0, 300))
+            println(c.cyan("│ ") + truncate(line, w - 2));
+        if (all.length > 300)
+            println(c.dim(`│ … (${all.length - 300} more lines)`));
+        println(c.cyan("└─"));
+        return true;
     }
     /**
      * Flip the per-session full-tool-output flag (V1.1 — Item 5).
@@ -37,8 +79,7 @@ export class StreamRenderer {
                 this.renderAssistant(p);
                 break;
             case "thinking":
-                if (this.opts.showThinking)
-                    this.renderThinking(p);
+                this.renderThinking(p);
                 break;
             case "tool":
                 this.renderTool(p);
@@ -119,11 +160,14 @@ export class StreamRenderer {
         if (phase === "start" || phase === "started") {
             this.currentAssistantHasContent = false;
             this.currentAssistantText = "";
-            println(c.dim(`[run started · ${data?.runId ?? p.runId}]`));
+            this.thinkingOpen = false;
+            this.thinkingMarkedThisRun = false;
+            // No "[run started · <id>]" marker — the Aurelius> label is the turn boundary.
         }
         else if (phase === "end" || phase === "ended" || phase === "complete") {
+            this.closeThinking();
             this.finishAssistantLine();
-            println(c.dim(`[run ended]`));
+            // No "[run ended]" marker; turn spacing is handled by the TUI.
         }
         // Other phases ignored.
     }
@@ -153,16 +197,17 @@ export class StreamRenderer {
         }
     }
     renderAssistantLabel() {
-        process.stdout.write(c.magenta("agent> "));
+        writeRaw(brand.ir(`${this.assistantLabel}> `)); // agent's color (IR)
     }
     renderAssistantDelta(delta) {
         if (delta.length === 0)
             return false;
+        this.closeThinking();
         if (!this.currentAssistantHasContent)
             this.renderAssistantLabel();
         this.currentAssistantHasContent = true;
         this.currentAssistantText += delta;
-        process.stdout.write(delta);
+        writeRaw(delta);
         return true;
     }
     renderAssistantSnapshot(snapshot) {
@@ -175,27 +220,56 @@ export class StreamRenderer {
             }
             return false;
         }
+        this.closeThinking();
         if (!this.currentAssistantHasContent)
             this.renderAssistantLabel();
         this.currentAssistantHasContent = true;
         this.currentAssistantText += suffix;
-        process.stdout.write(suffix);
+        writeRaw(suffix);
         return true;
     }
     finishAssistantLine() {
+        this.closeThinking();
         if (!this.currentAssistantHasContent)
             return;
         println();
         this.currentAssistantHasContent = false;
     }
     renderThinking(p) {
+        if (this.thinkingMode === "off")
+            return;
         const data = p.data;
         if (!data)
             return;
         const text = data.delta ?? data.text ?? "";
         if (text.length === 0)
             return;
-        process.stdout.write(c.dim(c.italic(text)));
+        if (this.thinkingMode === "collapsed") {
+            // One unobtrusive marker per run — you know it reasoned, without the wall of text.
+            if (!this.thinkingMarkedThisRun) {
+                this.thinkingMarkedThisRun = true;
+                this.finishAssistantLine();
+                println(c.dim("💭 thinking…"));
+            }
+            return;
+        }
+        // "on": stream the reasoning under a branded 💭 gutter, dim + italic.
+        if (!this.thinkingOpen) {
+            if (this.currentAssistantHasContent) {
+                println();
+                this.currentAssistantHasContent = false;
+            }
+            writeRaw(c.dim("💭 "));
+            this.thinkingOpen = true;
+        }
+        writeRaw(c.dim(c.italic(text)));
+    }
+    // Close an open 💭 reasoning block with a newline so following content starts clean.
+    closeThinking() {
+        if (!this.thinkingOpen)
+            return;
+        this.thinkingOpen = false;
+        println();
     }
     renderTool(p) {
         const data = p.data;
@@ -213,6 +287,8 @@ export class StreamRenderer {
             ((phase === "result" || phase === "end" || phase === "complete" || phase === "completed")
                 && data.isError === true);
         if (phase === "start" || phase === "started") {
+            if (!this.opts.showFullToolOutput)
+                return; // collapsed: no in-progress box (🦅 shows activity)
             const argsSummary = summarizeArgs(data.args);
             println(c.cyan(`┌─ ${name} ${"─".repeat(Math.max(2, termWidth() - name.length - 6))}`));
             if (argsSummary) {
@@ -265,11 +341,23 @@ export class StreamRenderer {
         }
         if (phase === "end" || phase === "complete" || phase === "completed" || phase === "result") {
             const result = data.result ?? "";
+            const dur = data.durationMs != null ? ` ${(data.durationMs / 1000).toFixed(1)}s` : "";
+            if (!this.opts.showFullToolOutput) {
+                // collapsed (default): one tight line — ⚙ name · short summary. /expand (or [r]) shows full.
+                const lines = result.length > 0 ? result.split("\n") : [];
+                const summary = lines.length === 0
+                    ? "done"
+                    : lines.length === 1
+                        ? truncate(lines[0], Math.max(8, termWidth() - name.length - 12))
+                        : `${truncate(lines[0], 40)} (+${lines.length - 1} more · /expand)`;
+                println(c.dim("⚙ ") + c.cyan(name) + c.dim(` · ${summary}${dur}`));
+                this.lastTool = result.length > 0 ? { name, result } : null; // remember for Ctrl+O expand
+                return;
+            }
             if (result.length > 0) {
                 const summary = this.summarizeResult(result);
                 println(c.cyan(`│ ${c.dim("result:")} ${summary}`));
             }
-            const dur = data.durationMs != null ? ` ${(data.durationMs / 1000).toFixed(1)}s` : "";
             println(c.cyan(`└─ ${c.dim(`done${dur} · press [r] to expand`)}`));
             return;
         }

@@ -20,6 +20,7 @@ export class ChatRunner {
     liveness;
     approval;
     sessionKey = null;
+    modelOverride = null; // set by /model over the flyway (sessions.patch)
     currentRunId = null;
     activeRunIds = new Set();
     completedRuns = new Map();
@@ -52,6 +53,7 @@ export class ChatRunner {
             ...DEFAULT_RENDERER_OPTIONS,
             showFullToolOutput: opts.showFullToolOutput ?? false,
             showThinking: opts.showThinking ?? true,
+            assistantLabel: opts.assistantLabel,
         });
     }
     async connect() {
@@ -91,6 +93,7 @@ export class ChatRunner {
             livenessThresholdMs: this.livenessThresholdMs,
             unhealthyTickThresholdMs: Math.max(15_000, 3 * policy.policy.tickIntervalMs),
             stuckRunThresholdMs: 120_000,
+            managed: this.opts.tui ?? false,
         });
         this.liveness.start();
         this.router = new EventRouter({
@@ -484,12 +487,91 @@ export class ChatRunner {
     resumeKey() {
         return this.sessionKey;
     }
+    /** Structured connection health for the TUI status bar (idle before connect). */
+    healthSnapshot() {
+        if (this.liveness)
+            return this.liveness.snapshot();
+        return { state: "ok", runQuietMs: 0, gatewayTickMs: 0, inFlight: false, reconnectAttempt: null, reconnectDelayMs: null };
+    }
+    /** True while a run is in flight (drives the working indicator). */
+    isInFlight() {
+        return this.activeRunIds.size > 0;
+    }
+    /** The current run id, for the working indicator's deterministic word seed. */
+    currentRun() {
+        return this.currentRunId;
+    }
+    /** Set the thinking presentation mode (/thinking). Returns the new mode. */
+    setThinking(mode) {
+        return this.renderer.setThinking(mode);
+    }
+    /** Read-only view of the current thinking mode. */
+    getThinking() {
+        return this.renderer.getThinking();
+    }
+    /** Read-only view of the expand-tool-output flag (/expand toggles it via [r]). */
+    isExpanded() {
+        return this.renderer.isFullOutput();
+    }
+    /** Expand the last collapsed tool's full output inline (Ctrl+O). Returns true if there was one. */
+    expandLastTool() {
+        return this.renderer.expandLast();
+    }
+    /** The model this session is running on (the /model override, else the launch default). */
+    currentModel() {
+        return this.modelOverride ?? this.opts.modelPrimary ?? "";
+    }
+    /**
+     * Set the session's model over the flyway (sessions.patch {model}). The gateway validates against
+     * the agent's allowed models and rejects an unknown one. Returns true on success.
+     */
+    async setModel(model) {
+        this.modelOverride = model; // applied at session-create (works without elevated scope)
+        if (!this.sessionKey)
+            return true; // no session yet → takes effect on your first message
+        return this.patchSession({ model }); // existing session → sessions.patch (operator.admin gated)
+    }
+    /**
+     * Set the agent's thinking/reasoning level (sessions.patch {thinkingLevel}). Only possible once a
+     * session exists, and the gateway gates it behind operator.admin — so over a normal flyway seat
+     * this is effectively a Flyway·deep feature. Valid: off·minimal·low·medium·high·xhigh·max.
+     */
+    async setThinkingLevel(level) {
+        if (!this.sessionKey)
+            return false; // sessions.create can't carry thinkingLevel
+        return this.patchSession({ thinkingLevel: level });
+    }
+    // True once a server session exists (after the first message). Lets the UI know whether a model
+    // change can still be applied at create-time vs needs the (scope-gated) patch path.
+    hasSession() {
+        return this.sessionKey != null;
+    }
+    // Patch the current session. sessions.patch accepts model/thinkingLevel but the gateway requires
+    // operator.admin to apply them — absent on a normal flyway seat, so we swallow that specific error
+    // and let the caller show clean guidance.
+    async patchSession(patch) {
+        if (!this.connected || !this.sessionKey)
+            return false;
+        try {
+            await this.transport.request("sessions.patch", { key: this.sessionKey, ...patch });
+            return true;
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!/operator\.admin/i.test(msg))
+                eprintln(c.red(`session update failed: ${msg}`));
+            return false;
+        }
+    }
     async ensureSession() {
         // ANVIL-3 P1 fix: SessionsCreateParamsSchema rejects `verboseLevel` as an
         // additional property. Create with only allowed fields, then assert
         // verboseLevel via sessions.patch (SPEC §5.3).
         const resp = await this.transport
-            .request("sessions.create", { agentId: this.opts.agentId })
+            .request("sessions.create", {
+            agentId: this.opts.agentId,
+            ...(this.modelOverride ? { model: this.modelOverride } : {}), // /model takes effect at create
+        })
             .catch(() => null);
         const key = resp?.key
             ?? resp?.sessionKey;
