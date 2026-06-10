@@ -134,7 +134,9 @@ async function forgeFetch(auth, method, pathname, { query, body } = {}) {
     res = await fetch(url, {
       method,
       headers: {
-        authorization: `Bearer ${auth.apiKey}`,
+        // Instance API keys ride X-API-Key — withAuth routes a Bearer token to
+        // Cowork-JWT/Firebase verification, where a bench_… key 401s.
+        "x-api-key": auth.apiKey,
         "x-expected-instance-id": auth.instanceId,
         ...(body ? { "content-type": "application/json" } : {}),
       },
