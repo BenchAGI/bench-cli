@@ -8,6 +8,7 @@ import { cmdStatus } from "./commands/status.mjs";
 import { cmdFeed } from "./commands/feed.mjs";
 import { cmdTail } from "./commands/tail.mjs";
 import { cmdCommitments } from "./commands/commitments.mjs";
+import { cmdForge } from "./commands/forge.mjs";
 import { cmdSetup } from "./commands/setup.mjs";
 import { cleanStderr } from "./lib/openclaw.mjs";
 import { readFileSync } from "node:fs";
@@ -30,6 +31,11 @@ Agent commands:
   ask <agent> "..."     Single-turn message to an agent
   chat <agent>          Per-agent interactive REPL
   commitments           Inferred follow-ups from agent conversations
+
+Forge (Bench cloud):
+  forge submit          Send a request to Bench's Forge
+  forge list            List your Forge packets
+  forge status <id>     Packet state + Bench's replies
 
 Inspect commands:
   feed                  Compact fused snapshot (status + sessions + tasks)
@@ -63,6 +69,7 @@ const COMMANDS = {
   status: cmdStatus,
   tail: cmdTail,
   commitments: cmdCommitments,
+  forge: cmdForge,
   setup: cmdSetup,
 };
 

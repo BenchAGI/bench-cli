@@ -7,12 +7,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { parseArgs } from "../src/lib/args.mjs";
 import { extractJson, cleanStderr } from "../src/lib/openclaw.mjs";
 import { resolveAgentId } from "../src/lib/agents.mjs";
+import { resolveForgeAuth } from "../src/commands/forge.mjs";
 import { profileIsFresh } from "../dist/v2/state/user-profile.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,6 +106,7 @@ await test("`bench --help` runs and lists every command", async () => {
     "status",
     "tail",
     "commitments",
+    "forge",
     "setup",
   ]) {
     assert.match(stdout, new RegExp(`\\b${cmd}\\b`), `expected ${cmd} in --help`);
@@ -117,7 +119,7 @@ await test("`bench version` matches package.json", async () => {
   assert.equal(stdout.trim(), PKG.version);
 });
 
-for (const cmd of ["ask", "chat", "feed", "tail", "commitments", "setup", "tasks", "sessions", "status", "agents"]) {
+for (const cmd of ["ask", "chat", "feed", "tail", "commitments", "forge", "setup", "tasks", "sessions", "status", "agents"]) {
   await test(`\`bench ${cmd} --help\` works`, async () => {
     const { code, stdout } = await runBench([cmd, "--help"]);
     assert.equal(code, 0, `exit=${code}`);
@@ -218,6 +220,78 @@ await test("attention set→render→clear surfaces a notification then removes 
   }
 });
 
+// --- bench forge: auth resolution (env > file > default) ---
+
+await test("resolveForgeAuth: env wins over files", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    mkdirSync(path.join(home, ".openclaw"), { recursive: true });
+    writeFileSync(path.join(home, ".openclaw", "bench-cloud.key"), "file-key\n");
+    writeFileSync(
+      path.join(home, ".openclaw", "bench-cloud.json"),
+      JSON.stringify({ instanceId: "file-inst", apiBase: "https://file.example/api" }),
+    );
+    const auth = resolveForgeAuth({
+      env: {
+        BENCH_API_KEY: " env-key ",
+        BENCH_INSTANCE_ID: "env-inst",
+        BENCH_API_BASE: "https://env.example/api/",
+      },
+      home,
+    });
+    assert.equal(auth.apiKey, "env-key");
+    assert.equal(auth.instanceId, "env-inst");
+    assert.equal(auth.apiBase, "https://env.example/api"); // trailing slash trimmed
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("resolveForgeAuth: falls back to ~/.openclaw files, trims the key", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    mkdirSync(path.join(home, ".openclaw"), { recursive: true });
+    writeFileSync(path.join(home, ".openclaw", "bench-cloud.key"), "  file-key  \n");
+    writeFileSync(
+      path.join(home, ".openclaw", "bench-cloud.json"),
+      JSON.stringify({ instanceId: "file-inst", apiBase: "https://file.example/api" }),
+    );
+    const auth = resolveForgeAuth({ env: {}, home });
+    assert.equal(auth.apiKey, "file-key");
+    assert.equal(auth.instanceId, "file-inst");
+    assert.equal(auth.apiBase, "https://file.example/api");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("resolveForgeAuth: empty when nothing configured, default apiBase", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const auth = resolveForgeAuth({ env: {}, home });
+    assert.equal(auth.apiKey, "");
+    assert.equal(auth.instanceId, "");
+    assert.equal(auth.apiBase, "https://benchagi.com/api");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge submit` without auth fails with setup guidance", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const { code, stderr } = await runBenchEnv(
+      ["forge", "submit", "--title", "t", "--goal", "g"],
+      { HOME: home, BENCH_API_KEY: "", BENCH_INSTANCE_ID: "", BENCH_API_BASE: "" },
+    );
+    assert.notEqual(code, 0);
+    assert.match(stderr, /not connected to Bench Cloud/);
+    assert.match(stderr, /forge scopes/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 await test("profileIsFresh: fresh within window, false when stale/missing/garbage", () => {
   assert.equal(profileIsFresh(null), false);
   assert.equal(profileIsFresh({}), false);
@@ -232,6 +306,20 @@ process.exit(failed ? 1 : 0);
 function runBench(args) {
   return new Promise((resolve) => {
     const child = spawn("node", [BENCH, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (b) => (stdout += b.toString("utf8")));
+    child.stderr.on("data", (b) => (stderr += b.toString("utf8")));
+    child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
+function runBenchEnv(args, env) {
+  return new Promise((resolve) => {
+    const child = spawn("node", [BENCH, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b) => (stdout += b.toString("utf8")));
