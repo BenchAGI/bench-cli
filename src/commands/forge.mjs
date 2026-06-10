@@ -1,7 +1,7 @@
 // `bench forge` — submit requests to Bench's Forge and read answers back.
 //
 // Customer agents/operators talk to Bench's build loop without GitHub access:
-//   bench forge submit  → open a packet (dev request, question, design pass…)
+//   bench forge submit  → open a packet (dev request, support ask, design pass…)
 //   bench forge list    → see your packets and their states
 //   bench forge status  → one packet + the customer-visible message thread
 //
@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const DEFAULT_API_BASE = "https://benchagi.com/api";
-const KINDS = ["dev-request", "agent-behavior", "design-pass", "support", "question"];
+const KINDS = ["dev-request", "agent-behavior", "design-pass", "support", "content"];
 
 const HELP = `bench forge <subcommand> [options]
 
