@@ -205,6 +205,7 @@ async function forgeList(flags) {
   const query = {};
   if (strFlag(flags.state)) query.state = strFlag(flags.state);
   if (strFlag(flags.since)) query.since = strFlag(flags.since);
+  if (strFlag(flags.limit)) query.limit = strFlag(flags.limit);
   const data = await forgeFetch(auth, "GET", "/v1/forge/packets/agent", { query });
   if (flags.json) {
     process.stdout.write(JSON.stringify(data, null, 2) + "\n");
@@ -225,7 +226,7 @@ async function forgeList(flags) {
     p.kind ?? "",
     stateColor(p.state),
     relativeAge(p.updatedAtMs ?? p.createdAtMs),
-    truncate(p.title ?? "", 60),
+    truncate(packetTitle(p), 60),
   ]);
   process.stdout.write(table(["PACKET", "KIND", "STATE", "UPDATED", "TITLE"], rows) + "\n");
   if (sorted.length > visible.length) {
@@ -255,7 +256,7 @@ async function forgeStatus(positionals, flags) {
   const lines = [
     `${c.bold(String(packet.packetId ?? packetId))}  ${stateColor(packet.state)}`,
     `  kind      ${packet.kind ?? ""}`,
-    `  title     ${packet.title ?? ""}`,
+    `  title     ${packetTitle(packet)}`,
     `  goal      ${packet.goal ?? ""}`,
   ];
   if (packet.targetAgent) lines.push(`  target    ${packet.targetAgent}`);
@@ -271,7 +272,7 @@ async function forgeStatus(positionals, flags) {
   }
   process.stdout.write("\n" + c.bold("Thread:") + "\n");
   for (const m of messages) {
-    const who = m.authorType === "customer" ? c.cyan("you") : c.magenta(m.authorType ?? "bench");
+    const who = customerAuthor(m.authorType) ? c.cyan("you") : c.magenta(m.authorType ?? "bench");
     const meta = [m.kind, relativeAge(m.createdAtMs)].filter(Boolean).join(" · ");
     process.stdout.write(`  ${who} ${c.dim(meta)}\n`);
     for (const line of String(m.body ?? "").split("\n")) {
@@ -285,6 +286,14 @@ async function forgeStatus(positionals, flags) {
 
 function strFlag(v) {
   return typeof v === "string" ? v.trim() : "";
+}
+
+function packetTitle(packet) {
+  return String(packet?.title ?? packet?.desiredSkillOrUI ?? "");
+}
+
+function customerAuthor(authorType) {
+  return authorType === "customer" || authorType === "customer-agent";
 }
 
 function stateColor(s) {
