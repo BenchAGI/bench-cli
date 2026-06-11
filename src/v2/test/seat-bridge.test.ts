@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
+  buildSeatCaptureFromEnv,
   defaultWakeForEvent,
   extractHookCaptureText,
   normalizeSeatEvent,
@@ -21,4 +22,13 @@ test("seat bridge only wakes harness for prompt-like events by default", () => {
   assert.equal(defaultWakeForEvent("summary"), true);
   assert.equal(defaultWakeForEvent("session_start"), false);
   assert.equal(defaultWakeForEvent("session_stop"), false);
+});
+
+test("seat bridge emits OpenClaw-compatible ISO timestamps", () => {
+  const capture = buildSeatCaptureFromEnv({
+    event: "user_prompt",
+    rawHookPayload: JSON.stringify({ prompt: "review the launch" }),
+  });
+  assert.equal(typeof capture.ts, "string");
+  assert.ok(Number.isFinite(Date.parse(capture.ts)), capture.ts);
 });
