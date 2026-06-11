@@ -4,15 +4,16 @@ import { PROTOCOL_VERSION } from "../protocol/types.js";
 import { resolveGatewayToken, resolveGatewayPassword } from "../auth/gateway-token.js";
 import { c, println } from "../render/ansi.js";
 import { loadState, setDefaultAgent } from "../state/state-file.js";
-export async function listAgents() {
-    const transport = new LocalGatewayWsTransport();
+export async function listAgents(gatewayUrl) {
+    const url = gatewayUrl ?? "ws://127.0.0.1:18789";
+    const transport = new LocalGatewayWsTransport({ url });
     const reachable = await transport.isReachable();
     if (!reachable) {
-        throw Object.assign(new Error("Local OpenClaw Gateway not reachable at ws://127.0.0.1:18789. " +
+        throw Object.assign(new Error(`OpenClaw Gateway not reachable at ${url}. ` +
             "Ensure the gateway is running, or run `openclaw doctor`."), { exitCode: 2 });
     }
     await transport.connect({
-        url: "ws://127.0.0.1:18789",
+        url,
         token: await resolveGatewayToken(),
         password: await resolveGatewayPassword(),
         protocolVersion: PROTOCOL_VERSION,
@@ -51,8 +52,8 @@ function extractAgents(payload) {
     })
         .filter((x) => x !== null);
 }
-export async function commandAgentsList() {
-    const agents = await listAgents();
+export async function commandAgentsList(gatewayUrl) {
+    const agents = await listAgents(gatewayUrl);
     const state = await loadState();
     if (agents.length === 0) {
         println(c.dim("no agents configured"));
@@ -65,8 +66,8 @@ export async function commandAgentsList() {
         println(`${isDefault} ${c.cyan(a.id.padEnd(24))} ${display}${model}`);
     }
 }
-export async function commandAgentsUse(name) {
-    const agents = await listAgents();
+export async function commandAgentsUse(name, gatewayUrl) {
+    const agents = await listAgents(gatewayUrl);
     const resolved = resolveShortName(name, agents);
     if (!resolved) {
         println(c.red(`unknown agent: ${name}`));

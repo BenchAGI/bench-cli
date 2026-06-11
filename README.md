@@ -30,9 +30,9 @@ $ benchagi launch          # force the launcher
 $ benchagi --no-launch     # skip it; open the REPL with your last agent
 ```
 
-- **Picker:** ↑/↓ move · **Enter = cloud** (runs on your instance's gateway,
-  consuming your company's allotment) · **`l` = local Claude Code seat** (runs on
-  your own machine/Claude auth) · `q` quit. Exit a session to return to the picker.
+- **Picker:** ↑/↓ move · **Enter = tunnel** (Bench harness) · **`d` = direct
+  gateway** · **`l` = local Claude Code seat** · **`x` = local Codex CLI seat** ·
+  `q` quit. Exit a session to return to the picker.
 - **Login:** if you're not signed in, the launcher runs `benchagi auth login`
   (Firebase browser hand-off) first, so agents know who you are.
 - **Roster = entitlements:** the agents shown are exactly what you're provisioned
@@ -122,6 +122,9 @@ bench setup            # legacy readiness check (deprecated alias)
 `benchagi doctor` is the canonical post-install check. It verifies the V2
 streaming console: local Gateway protocol support, event-frame methods,
 discovered agents, and Firebase Direct identity when signed in.
+For local Claude/Codex seat memory capture, it must report the gateway method
+`local-seat.capture`; if that method is missing, upgrade OpenClaw before
+launching local seats.
 
 `bench setup` is the legacy readiness check on the deprecated `bench` alias.
 It verifies the legacy command surface and local OpenClaw readiness:
@@ -150,6 +153,19 @@ formula stub for publishing it is in `scripts/homebrew/benchagi.rb`.
 - Node 20+
 - [OpenClaw](https://docs.openclaw.ai) (`npm install -g openclaw`) with a
   running local gateway
+
+## Local Claude and Codex seats
+
+Local seats preserve the picker-selected agent through `BENCHAGI_SEAT_AGENT_ID`
+and send bounded session captures to OpenClaw through `local-seat.capture` when
+the gateway supports it. If the gateway is offline or too old, BenchAGI still
+writes fallback JSONL under `~/.config/benchagi/seat-events/`, but those files
+are not replayed automatically.
+
+For Codex CLI seats, BenchAGI writes `.codex/hooks.json` in the seat workspace.
+On first launch, if Codex reports hooks need review, run `/hooks` and trust the
+BenchAGI seat bridge hook. Until trusted, Codex skips the hook and prompt
+captures will not reach OpenClaw.
 
 ## Commands
 

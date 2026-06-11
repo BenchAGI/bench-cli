@@ -10,7 +10,13 @@
       { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" hook-notification" } ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" clear" } ] }
+      { "hooks": [
+        { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" clear" },
+        { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" user_prompt", "timeout": 10 }
+      ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_stop", "timeout": 10 } ] }
     ]
   }
 }

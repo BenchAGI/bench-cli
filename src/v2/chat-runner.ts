@@ -81,10 +81,11 @@ export class ChatRunner {
 
   async connect(): Promise<void> {
     const reachable = await this.transport.isReachable();
+    const url = this.opts.gatewayUrl ?? "ws://127.0.0.1:18789";
     if (!reachable) {
       throw Object.assign(
         new Error(
-          "Local OpenClaw Gateway not reachable at ws://127.0.0.1:18789. " +
+          `OpenClaw Gateway not reachable at ${url}. ` +
           "Ensure the gateway is running, or run `openclaw doctor`."),
         { exitCode: 2 },
       );
@@ -93,7 +94,7 @@ export class ChatRunner {
     const token = await resolveGatewayToken(this.opts.gatewayToken);
     const password = await resolveGatewayPassword(this.opts.gatewayPassword);
     const policy = await this.transport.connect({
-      url: this.opts.gatewayUrl ?? "ws://127.0.0.1:18789",
+      url,
       token,
       password,
       protocolVersion: PROTOCOL_VERSION,

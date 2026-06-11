@@ -15,7 +15,7 @@ function shortModel(m) {
     return MODEL_SHORT[m] ?? m;
 }
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-export async function resolveRoster() {
+export async function resolveRoster(opts = {}) {
     const entitled = await resolveEntitledAgents().catch(() => null);
     if (entitled && entitled.length) {
         return entitled.map((a) => ({
@@ -27,7 +27,7 @@ export async function resolveRoster() {
             emoji: a.emoji,
         }));
     }
-    const agents = await listAgents().catch(() => []);
+    const agents = await listAgents(opts.gatewayUrl).catch(() => []);
     return agents.map((a) => ({
         agentId: a.id,
         name: cap(a.displayName ?? a.id),

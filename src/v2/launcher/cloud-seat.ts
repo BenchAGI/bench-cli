@@ -32,8 +32,8 @@ const MODEL_SHORT: Record<string, string> = {
 const shortModel = (m?: string): string => (m ? (MODEL_SHORT[m] ?? m) : "");
 const cap = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
-export async function locateAgent(name: string | null): Promise<AgentLite> {
-  const agents = await listAgents();
+export async function locateAgent(name: string | null, gatewayUrl?: string): Promise<AgentLite> {
+  const agents = await listAgents(gatewayUrl);
   if (agents.length === 0) {
     throw Object.assign(new Error("no agents configured; check openclaw.json agents.list"), { exitCode: 5 });
   }
@@ -155,7 +155,7 @@ async function runTuiSeat(runner: ChatRunner, agent: AgentLite): Promise<void> {
 }
 
 export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts = {}): Promise<void> {
-  const agent = await locateAgent(agentId);
+  const agent = await locateAgent(agentId, opts.gatewayUrl);
   const useTui = shouldUseTui(opts);
   const runner = new ChatRunner({
     agentId: agent.id,
