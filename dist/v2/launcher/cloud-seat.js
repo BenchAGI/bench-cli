@@ -25,8 +25,8 @@ const MODEL_SHORT = {
 };
 const shortModel = (m) => (m ? (MODEL_SHORT[m] ?? m) : "");
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-export async function locateAgent(name) {
-    const agents = await listAgents();
+export async function locateAgent(name, gatewayUrl) {
+    const agents = await listAgents(gatewayUrl);
     if (agents.length === 0) {
         throw Object.assign(new Error("no agents configured; check openclaw.json agents.list"), { exitCode: 5 });
     }
@@ -131,7 +131,7 @@ async function runTuiSeat(runner, agent) {
     });
 }
 export async function runCloudSeat(agentId, opts = {}) {
-    const agent = await locateAgent(agentId);
+    const agent = await locateAgent(agentId, opts.gatewayUrl);
     const useTui = shouldUseTui(opts);
     const runner = new ChatRunner({
         agentId: agent.id,

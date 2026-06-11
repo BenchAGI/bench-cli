@@ -3,6 +3,7 @@ import { ensureCursorRestoredOnExit, eprintln, println } from "./render/ansi.js"
 import { commandAgentsList, commandAgentsUse } from "./commands/agents.js";
 import { commandAuthLogin, commandAuthLogout, commandAuthStatus } from "./commands/auth.js";
 import { commandDoctor } from "./commands/doctor.js";
+import { commandSeatBridge } from "./commands/seat-bridge.js";
 import { commandVersion, CLI_VERSION } from "./commands/version.js";
 import { getProjectAgent, loadState } from "./state/state-file.js";
 import { runCloudSeat } from "./launcher/cloud-seat.js";
@@ -26,7 +27,10 @@ export async function run(argv) {
             await runAuth(parsed.positional);
             return;
         case "agents":
-            await runAgents(parsed.positional);
+            await runAgents(parsed.positional, parsed.gatewayUrl);
+            return;
+        case "seat-bridge":
+            await commandSeatBridge(parsed.positional);
             return;
         case "launch":
             await runLaunch({
@@ -34,6 +38,7 @@ export async function run(argv) {
                 full: parsed.full,
                 noThinking: parsed.noThinking,
                 classic: parsed.classic,
+                directGatewayUrl: parsed.directGatewayUrl ?? process.env.BENCHAGI_DIRECT_GATEWAY_URL,
                 gatewayUrl: parsed.gatewayUrl ?? process.env.BENCHAGI_GATEWAY_URL,
                 traceFramesPath: parsed.traceFramesPath,
             });
@@ -51,6 +56,7 @@ export async function run(argv) {
                     full: parsed.full,
                     noThinking: parsed.noThinking,
                     classic: parsed.classic,
+                    directGatewayUrl: parsed.directGatewayUrl ?? process.env.BENCHAGI_DIRECT_GATEWAY_URL,
                     gatewayUrl: parsed.gatewayUrl ?? process.env.BENCHAGI_GATEWAY_URL,
                     traceFramesPath: parsed.traceFramesPath,
                 });
@@ -87,10 +93,10 @@ async function runAuth(args) {
             process.exit(1);
     }
 }
-async function runAgents(args) {
+async function runAgents(args, gatewayUrl) {
     const sub = args[0];
     if (sub === "list" || sub === undefined) {
-        await commandAgentsList();
+        await commandAgentsList(gatewayUrl);
         return;
     }
     if (sub === "use") {
@@ -99,7 +105,7 @@ async function runAgents(args) {
             eprintln(`Usage: benchagi agents use <name>`);
             process.exit(1);
         }
-        await commandAgentsUse(name);
+        await commandAgentsUse(name, gatewayUrl);
         return;
     }
     eprintln(`Usage: benchagi agents <list|use <name>>`);
@@ -157,6 +163,14 @@ function parseArgs(argv) {
             out.gatewayUrl = arg.slice("--gateway=".length);
             continue;
         }
+        if (arg === "--direct-gateway") {
+            out.directGatewayUrl = argv[++i];
+            continue;
+        }
+        if (arg.startsWith("--direct-gateway=")) {
+            out.directGatewayUrl = arg.slice("--direct-gateway=".length);
+            continue;
+        }
         if (arg === "--trace-frames") {
             out.traceFramesPath = argv[++i];
             continue;
@@ -179,6 +193,7 @@ function parseArgs(argv) {
                 arg === "auth" ||
                 arg === "agents" ||
                 arg === "doctor" ||
+                arg === "seat-bridge" ||
                 arg === "version" ||
                 arg === "help") {
                 out.command = arg;
@@ -215,7 +230,8 @@ Flags:
   --full                   expand all tool output by default
   --no-thinking            hide thinking deltas
   --classic                use the classic readline REPL (skip the full-screen TUI)
-  --gateway <ws-url>       connect to a specific gateway (e.g. ws://100.64.0.3:18789 — the flyway)
+  --gateway <ws-url>       default tunnel/harness gateway for chat/Enter mode
+  --direct-gateway <ws-url> gateway used by launcher direct-harness mode (d)
   --trace-frames <path>    append raw gateway WS frames as JSONL
   --help, --version
 `);

@@ -12,19 +12,20 @@ export type AgentSummary = {
   model?: string;
 };
 
-export async function listAgents(): Promise<AgentSummary[]> {
-  const transport = new LocalGatewayWsTransport();
+export async function listAgents(gatewayUrl?: string): Promise<AgentSummary[]> {
+  const url = gatewayUrl ?? "ws://127.0.0.1:18789";
+  const transport = new LocalGatewayWsTransport({ url });
   const reachable = await transport.isReachable();
   if (!reachable) {
     throw Object.assign(
       new Error(
-        "Local OpenClaw Gateway not reachable at ws://127.0.0.1:18789. " +
+        `OpenClaw Gateway not reachable at ${url}. ` +
         "Ensure the gateway is running, or run `openclaw doctor`."),
       { exitCode: 2 },
     );
   }
   await transport.connect({
-    url: "ws://127.0.0.1:18789",
+    url,
     token: await resolveGatewayToken(),
     password: await resolveGatewayPassword(),
     protocolVersion: PROTOCOL_VERSION,
@@ -60,8 +61,8 @@ function extractAgents(payload: unknown): AgentSummary[] {
     .filter((x): x is AgentSummary => x !== null);
 }
 
-export async function commandAgentsList(): Promise<void> {
-  const agents = await listAgents();
+export async function commandAgentsList(gatewayUrl?: string): Promise<void> {
+  const agents = await listAgents(gatewayUrl);
   const state = await loadState();
   if (agents.length === 0) {
     println(c.dim("no agents configured"));
@@ -75,8 +76,8 @@ export async function commandAgentsList(): Promise<void> {
   }
 }
 
-export async function commandAgentsUse(name: string): Promise<void> {
-  const agents = await listAgents();
+export async function commandAgentsUse(name: string, gatewayUrl?: string): Promise<void> {
+  const agents = await listAgents(gatewayUrl);
   const resolved = resolveShortName(name, agents);
   if (!resolved) {
     println(c.red(`unknown agent: ${name}`));

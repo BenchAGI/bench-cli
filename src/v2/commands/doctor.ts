@@ -35,7 +35,7 @@ export async function commandDoctor(): Promise<void> {
         protocolVersion: PROTOCOL_VERSION,
       });
       println(ok(`gateway protocol v${policy.protocol} (server ${policy.serverVersion})`));
-      const required = ["chat.send", "chat.history", "sessions.list"];
+      const required = ["chat.send", "chat.history", "sessions.list", "local-seat.capture"];
       const missing = required.filter((m) => !policy!.methods.includes(m));
       if (missing.length > 0) {
         println(bad(`missing methods: ${missing.join(", ")}`));

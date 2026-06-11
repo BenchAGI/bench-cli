@@ -1,5 +1,5 @@
 // picker.tsx — the BenchAGI agent picker (ink). Renders to stderr so stdout
-// stays clean. Returns the chosen agent + mode (cloud default, local power-option).
+// stays clean. Returns the chosen agent + connection mode.
 
 import { useState } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
@@ -7,7 +7,7 @@ import { Box, Text, render, useApp, useInput } from "ink";
 import type { LauncherAgent } from "./roster.js";
 
 export interface PickerChoice {
-  mode: "cloud" | "local" | "quit";
+  mode: "tunnel" | "direct" | "local-claude" | "local-codex" | "quit";
   agent?: LauncherAgent;
 }
 
@@ -22,10 +22,16 @@ function Picker({ agents, onSelect }: { agents: LauncherAgent[]; onSelect: (c: P
     if (key.upArrow || input === "k") setIndex((i) => (i - 1 + agents.length) % agents.length);
     else if (key.downArrow || input === "j") setIndex((i) => (i + 1) % agents.length);
     else if (key.return) {
-      onSelect({ mode: "cloud", agent: agents[index] });
+      onSelect({ mode: "tunnel", agent: agents[index] });
       exit();
     } else if (input === "l") {
-      onSelect({ mode: "local", agent: agents[index] });
+      onSelect({ mode: "local-claude", agent: agents[index] });
+      exit();
+    } else if (input === "x") {
+      onSelect({ mode: "local-codex", agent: agents[index] });
+      exit();
+    } else if (input === "d") {
+      onSelect({ mode: "direct", agent: agents[index] });
       exit();
     } else if (input === "q" || key.escape) {
       onSelect({ mode: "quit" });
@@ -39,7 +45,7 @@ function Picker({ agents, onSelect }: { agents: LauncherAgent[]; onSelect: (c: P
         BENCH·AGI — choose an agent
       </Text>
       <Box marginBottom={1}>
-        <Text color={DIM}>cloud = your company allotment · local = your own Claude Code</Text>
+        <Text color={DIM}>tunnel = Bench harness · direct = gateway URL · local = Claude Code or Codex CLI</Text>
       </Box>
       {agents.map((a, i) => {
         const sel = i === index;
@@ -51,7 +57,7 @@ function Picker({ agents, onSelect }: { agents: LauncherAgent[]; onSelect: (c: P
         );
       })}
       <Box marginTop={1}>
-        <Text color={DIM}>↑/↓ move · enter cloud · l local seat · q quit</Text>
+        <Text color={DIM}>↑/↓ move · enter tunnel · d direct · l Claude Code · x Codex CLI · q quit</Text>
       </Box>
     </Box>
   );
