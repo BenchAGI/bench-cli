@@ -5,14 +5,16 @@
 // and shape checks for the new commands' help output.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { parseArgs } from "../src/lib/args.mjs";
 import { extractJson, cleanStderr } from "../src/lib/openclaw.mjs";
 import { resolveAgentId } from "../src/lib/agents.mjs";
+import { resolveForgeAuth } from "../src/commands/forge.mjs";
 import { profileIsFresh } from "../dist/v2/state/user-profile.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,6 +107,7 @@ await test("`bench --help` runs and lists every command", async () => {
     "status",
     "tail",
     "commitments",
+    "forge",
     "setup",
   ]) {
     assert.match(stdout, new RegExp(`\\b${cmd}\\b`), `expected ${cmd} in --help`);
@@ -117,7 +120,7 @@ await test("`bench version` matches package.json", async () => {
   assert.equal(stdout.trim(), PKG.version);
 });
 
-for (const cmd of ["ask", "chat", "feed", "tail", "commitments", "setup", "tasks", "sessions", "status", "agents"]) {
+for (const cmd of ["ask", "chat", "feed", "tail", "commitments", "forge", "setup", "tasks", "sessions", "status", "agents"]) {
   await test(`\`bench ${cmd} --help\` works`, async () => {
     const { code, stdout } = await runBench([cmd, "--help"]);
     assert.equal(code, 0, `exit=${code}`);
@@ -218,6 +221,137 @@ await test("attention set→render→clear surfaces a notification then removes 
   }
 });
 
+// --- bench forge: auth resolution (env > file > default) ---
+
+await test("resolveForgeAuth: env wins over files", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    mkdirSync(path.join(home, ".openclaw"), { recursive: true });
+    writeFileSync(path.join(home, ".openclaw", "bench-cloud.key"), "file-key\n");
+    writeFileSync(
+      path.join(home, ".openclaw", "bench-cloud.json"),
+      JSON.stringify({ instanceId: "file-inst", apiBase: "https://file.example/api" }),
+    );
+    const auth = resolveForgeAuth({
+      env: {
+        BENCH_API_KEY: " env-key ",
+        BENCH_INSTANCE_ID: "env-inst",
+        BENCH_API_BASE: "https://env.example/api/",
+      },
+      home,
+    });
+    assert.equal(auth.apiKey, "env-key");
+    assert.equal(auth.instanceId, "env-inst");
+    assert.equal(auth.apiBase, "https://env.example/api"); // trailing slash trimmed
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("resolveForgeAuth: falls back to ~/.openclaw files, trims the key", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    mkdirSync(path.join(home, ".openclaw"), { recursive: true });
+    writeFileSync(path.join(home, ".openclaw", "bench-cloud.key"), "  file-key  \n");
+    writeFileSync(
+      path.join(home, ".openclaw", "bench-cloud.json"),
+      JSON.stringify({ instanceId: "file-inst", apiBase: "https://file.example/api" }),
+    );
+    const auth = resolveForgeAuth({ env: {}, home });
+    assert.equal(auth.apiKey, "file-key");
+    assert.equal(auth.instanceId, "file-inst");
+    assert.equal(auth.apiBase, "https://file.example/api");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("resolveForgeAuth: empty when nothing configured, default apiBase", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const auth = resolveForgeAuth({ env: {}, home });
+    assert.equal(auth.apiKey, "");
+    assert.equal(auth.instanceId, "");
+    assert.equal(auth.apiBase, "https://benchagi.com/api");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge submit` without auth fails with setup guidance", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const { code, stderr } = await runBenchEnv(
+      ["forge", "submit", "--title", "t", "--goal", "g"],
+      { HOME: home, BENCH_API_KEY: "", BENCH_INSTANCE_ID: "", BENCH_API_BASE: "" },
+    );
+    assert.notEqual(code, 0);
+    assert.match(stderr, /not connected to Bench Cloud/);
+    assert.match(stderr, /forge scopes/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge list` renders desiredSkillOrUI and forwards limit", async () => {
+  await withForgeMock(async ({ method, url, headers }, res) => {
+    assert.equal(method, "GET");
+    assert.equal(url.pathname, "/api/v1/forge/packets/agent");
+    assert.equal(url.searchParams.get("limit"), "2");
+    assert.equal(headers["x-api-key"], "test-key");
+    assert.equal(headers["x-expected-instance-id"], "inst-1");
+    sendJson(res, {
+      packets: [
+        forgePacket({
+          packetId: "fp_1",
+          desiredSkillOrUI: "Project Alpha title",
+          updatedAt: Date.now(),
+        }),
+      ],
+      count: 1,
+    });
+  }, async (apiBase) => {
+    const { code, stdout, stderr } = await runBenchEnv(["forge", "list", "--limit", "2"], forgeEnv(apiBase));
+    assert.equal(code, 0, stderr);
+    assert.match(stdout, /Project Alpha title/);
+  });
+});
+
+await test("`bench forge status` renders customer projection title + customer-agent author", async () => {
+  await withForgeMock(async ({ method, url }, res) => {
+    assert.equal(method, "GET");
+    if (url.pathname === "/api/v1/forge/packets/agent") {
+      assert.equal(url.searchParams.get("packetId"), "fp_1");
+      sendJson(res, {
+        packets: [forgePacket({ packetId: "fp_1", desiredSkillOrUI: "Project Alpha title" })],
+        count: 1,
+      });
+      return;
+    }
+    if (url.pathname === "/api/v1/forge/packets/agent/fp_1/messages") {
+      sendJson(res, {
+        messages: [
+          {
+            authorType: "customer-agent",
+            body: "Please prioritize this.",
+            kind: "message",
+            createdAt: Date.now(),
+          },
+        ],
+        count: 1,
+      });
+      return;
+    }
+    sendJson(res, { error: "not found" }, 404);
+  }, async (apiBase) => {
+    const { code, stdout, stderr } = await runBenchEnv(["forge", "status", "fp_1"], forgeEnv(apiBase));
+    assert.equal(code, 0, stderr);
+    assert.match(stdout, /title\s+Project Alpha title/);
+    assert.match(stdout, /you message/);
+    assert.match(stdout, /Please prioritize this\./);
+  });
+});
+
 await test("profileIsFresh: fresh within window, false when stale/missing/garbage", () => {
   assert.equal(profileIsFresh(null), false);
   assert.equal(profileIsFresh({}), false);
@@ -240,6 +374,20 @@ function runBench(args) {
   });
 }
 
+function runBenchEnv(args, env) {
+  return new Promise((resolve) => {
+    const child = spawn("node", [BENCH, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (b) => (stdout += b.toString("utf8")));
+    child.stderr.on("data", (b) => (stderr += b.toString("utf8")));
+    child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
 function runScript(scriptPath, args, { env = {}, input = "" } = {}) {
   return new Promise((resolve) => {
     const child = spawn("node", [scriptPath, ...args], {
@@ -253,4 +401,60 @@ function runScript(scriptPath, args, { env = {}, input = "" } = {}) {
     child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
     child.stdin.end(input);
   });
+}
+
+function forgeEnv(apiBase) {
+  return {
+    BENCH_API_KEY: "test-key",
+    BENCH_INSTANCE_ID: "inst-1",
+    BENCH_API_BASE: apiBase,
+    NO_COLOR: "1",
+  };
+}
+
+function forgePacket(overrides = {}) {
+  const now = Date.now();
+  return {
+    packetId: "fp_1",
+    kind: "dev-request",
+    desiredSkillOrUI: "Project Alpha title",
+    goal: "Build Project Alpha.",
+    state: "received",
+    targetAgent: "aurelius",
+    targetAgentKnown: true,
+    createdAt: now,
+    submittedAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function withForgeMock(handler, fn) {
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      Promise.resolve(handler({ method: req.method, url, headers: req.headers }, res)).catch((err) => {
+        res.statusCode = 500;
+        res.end(String(err?.message ?? err));
+      });
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", async () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      try {
+        resolve(await fn(`http://127.0.0.1:${port}/api`));
+      } catch (err) {
+        reject(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+}
+
+function sendJson(res, body, status = 200) {
+  res.statusCode = status;
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(body));
 }
