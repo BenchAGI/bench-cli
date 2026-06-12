@@ -3,7 +3,7 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { coworkUrl, severityFor } from "../commands/forge-report.js";
+import { coworkUrl, markdownTableCell, severityFor } from "../commands/forge-report.js";
 import type { DoctorCheck } from "../commands/doctor.js";
 
 const check = (status: DoctorCheck["status"]): DoctorCheck => ({ name: "x", status, detail: "d" });
@@ -32,4 +32,8 @@ test("coworkUrl adds /api/v1 to a bare origin (trailing slash tolerated)", () =>
     coworkUrl("https://benchagi.com/", "/cowork/auth/refresh"),
     "https://benchagi.com/api/v1/cowork/auth/refresh",
   );
+});
+
+test("markdownTableCell escapes backslashes and pipes before flattening newlines", () => {
+  assert.equal(markdownTableCell("path\\|with\nnewline"), "path\\\\\\|with newline");
 });

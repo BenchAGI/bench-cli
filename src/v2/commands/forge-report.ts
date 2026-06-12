@@ -131,7 +131,7 @@ function composeReport(checks: DoctorCheck[], attach: { name: string; content: s
   lines.push("| check | status | detail |");
   lines.push("| --- | --- | --- |");
   for (const check of checks) {
-    lines.push(`| ${check.name} | ${check.status} | ${mdCell(check.detail)} |`);
+    lines.push(`| ${check.name} | ${check.status} | ${markdownTableCell(check.detail)} |`);
   }
   lines.push("");
   lines.push("## Versions");
@@ -153,8 +153,8 @@ function composeReport(checks: DoctorCheck[], attach: { name: string; content: s
   return lines.join("\n") + "\n";
 }
 
-function mdCell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+export function markdownTableCell(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 export function severityFor(checks: DoctorCheck[]): "sev-2" | "sev-3" | "question" {
