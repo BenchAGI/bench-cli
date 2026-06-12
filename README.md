@@ -30,9 +30,10 @@ $ benchagi launch          # force the launcher
 $ benchagi --no-launch     # skip it; open the REPL with your last agent
 ```
 
-- **Picker:** ↑/↓ move · **Enter = tunnel** (Bench harness) · **`d` = direct
-  gateway** · **`l` = local Claude Code seat** · **`x` = local Codex CLI seat** ·
-  `q` quit. Exit a session to return to the picker.
+- **Picker:** a two-stage arrow-key setup flow. Pick an agent, then choose
+  environment (**Cloud** tunnel, **Direct** gateway, **Claude** local seat, or
+  **Codex** local seat), model, effort, thinking display, and **Launch**.
+  Exit a session to return to the picker.
 - **Login:** if you're not signed in, the launcher runs `benchagi auth login`
   (Firebase browser hand-off) first, so agents know who you are.
 - **Roster = entitlements:** the agents shown are exactly what you're provisioned

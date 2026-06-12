@@ -247,7 +247,7 @@ Flags:
   --report                 (doctor) file the checks as a Forge diagnostics ticket
   --attach <path>          (doctor --report) include a runbook file in the report
   --gateway <ws-url>       default tunnel/harness gateway for chat/Enter mode
-  --direct-gateway <ws-url> gateway used by launcher direct-harness mode (d)
+  --direct-gateway <ws-url> gateway used by launcher Direct mode
   --trace-frames <path>    append raw gateway WS frames as JSONL
   --help, --version
 `);
