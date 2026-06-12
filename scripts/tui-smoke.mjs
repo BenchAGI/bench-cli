@@ -1,8 +1,8 @@
 // Isolated ink-render smoke for the TUI. Renders <App> against a stub runner + fake TTY streams so
 // we exercise app.tsx / working.tsx / status-bar.tsx / input.tsx at runtime (React hooks, ink
 // components, the poll loop, AND keyboard input) without a gateway or a real terminal. Catches the
-// class of errors type-checking can't: bad hooks, undefined components, render throws, the <Static>
-// post-mount scrollback bug, and the approval-key gate consuming 'r' at an idle prompt.
+// class of errors type-checking can't: bad hooks, undefined components, render throws, post-mount
+// buffer updates, and the approval-key gate consuming 'r' at an idle prompt.
 
 import React from "react";
 import { render } from "ink";
@@ -72,8 +72,8 @@ try {
     await sleep(40);
   }
   await sleep(120);
-  // Push a committed line AFTER mount — the <Static> immutable-append fix must surface it (the
-  // original mutate-in-place store made post-mount lines invisible).
+  // Push a committed line AFTER mount — immutable appends must surface it (the original
+  // mutate-in-place store made post-mount lines invisible).
   store.pushLine("after-mount-canary-12345");
   await sleep(120);
   app.unmount();
@@ -85,7 +85,7 @@ try {
 const out = chunks.join("");
 const checks = [
   ["banner/buffer line (pre-mount)", () => /hello from the buffer/.test(out)],
-  ["committed line AFTER mount (Static fix)", () => /after-mount-canary-12345/.test(out)],
+  ["committed line AFTER mount", () => /after-mount-canary-12345/.test(out)],
   ["status bar agent", () => /Aurelius/.test(out)],
   ["status bar tier", () => /Legendary/.test(out)],
   ["status bar model", () => /Opus 4\.8/.test(out)],

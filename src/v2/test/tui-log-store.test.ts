@@ -31,17 +31,17 @@ test("CRLF is normalized and lone CR is dropped", () => {
   assert.equal(s2.snapshot().pending, "ab");
 });
 
-test("each commit hands React a NEW array identity (ink <Static> reference contract)", () => {
+test("each commit hands React a NEW array identity", () => {
   const s = new LogStore();
   s.write("one\n");
   const a = s.snapshot().lines;
   s.write("two\n");
   const b = s.snapshot().lines;
-  assert.notEqual(a, b, "lines reference must change on append so <Static> re-renders");
+  assert.notEqual(a, b, "lines reference must change on append so React/ink re-renders");
   assert.deepEqual(b, ["one", "two"]);
 });
 
-test("clear bumps generation so <Static> remounts empty", () => {
+test("clear bumps generation so subscribers can detect a reset", () => {
   const s = new LogStore();
   s.write("a\nb\n");
   const g0 = s.snapshot().generation;
@@ -92,7 +92,7 @@ test("line buffer is capped with half-trim hysteresis + bumps generation", () =>
   const { lines, generation } = s.snapshot();
   assert.ok(lines.length <= 10, `expected <= cap(10), got ${lines.length}`);
   assert.equal(lines[lines.length - 1], "L29", "most recent line retained");
-  assert.ok(generation > 0, "cap-trim must bump generation to remount <Static>");
+  assert.ok(generation > 0, "cap-trim must bump generation to mark a history reset");
 });
 
 test("a full buffer does NOT remount on every single line (hysteresis)", () => {

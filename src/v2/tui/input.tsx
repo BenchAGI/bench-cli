@@ -7,6 +7,7 @@ import { Box, Text, useInput } from "ink";
 import { BRAND_HEX } from "../render/ansi.js";
 import { matchHint, type SlashCommand, SLASH_COMMANDS } from "../repl/slash.js";
 import { reduceInput, type InputState } from "./input-model.js";
+import { containsMouseEvent } from "./terminal-events.js";
 
 export const MAX_MENU = 8;
 
@@ -56,6 +57,7 @@ export function Input({
   const setBuffer = (buffer: string): void => onChange({ ...state, buffer, cursor: buffer.length, histIndex: null });
 
   useInput((input, key) => {
+    if (containsMouseEvent(input)) return;
     // App-level chords first.
     if (key.ctrl && input === "c") {
       if (busy) onInterrupt();
