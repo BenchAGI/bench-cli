@@ -28,8 +28,29 @@ tmp="$(mktemp -d)"
 cat > "$tmp/b.applescript" <<'OSA'
 on run
   set me_path to POSIX path of (path to me)
-  set cmd to me_path & "Contents/Resources/launch.command"
-  do shell script "/usr/bin/open -a Terminal " & quoted form of cmd
+  set cmd to quoted form of (me_path & "Contents/Resources/launch.command")
+  tell application "Terminal"
+    activate
+    set benchTab to do script cmd
+    try
+      set current settings of benchTab to settings set "Pro"
+    on error
+      try
+        set current settings of benchTab to settings set "Clear Dark"
+      on error
+        try
+          set current settings of benchTab to settings set "Silver Aerogel"
+        end try
+      end try
+    end try
+    try
+      set custom title of benchTab to "BenchAGI"
+    end try
+    try
+      set number of columns of front window to 120
+      set number of rows of front window to 34
+    end try
+  end tell
 end run
 OSA
 /usr/bin/osacompile -o "$APP" "$tmp/b.applescript"
