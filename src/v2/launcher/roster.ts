@@ -15,6 +15,7 @@ export interface LauncherAgent {
 }
 
 const MODEL_SHORT: Record<string, string> = {
+  "claude-fable-5": "Fable 5",
   "claude-opus-4-8": "Opus 4.8",
   "claude-opus-4-6": "Opus 4.6",
   "claude-sonnet-4-6": "Sonnet 4.6",
@@ -28,7 +29,7 @@ function shortModel(m?: string): string {
 
 const cap = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
-export async function resolveRoster(): Promise<LauncherAgent[]> {
+export async function resolveRoster(opts: { gatewayUrl?: string } = {}): Promise<LauncherAgent[]> {
   const entitled = await resolveEntitledAgents().catch(() => null);
   if (entitled && entitled.length) {
     return entitled.map((a) => ({
@@ -40,7 +41,7 @@ export async function resolveRoster(): Promise<LauncherAgent[]> {
       emoji: a.emoji,
     }));
   }
-  const agents = await listAgents().catch(() => [] as AgentSummary[]);
+  const agents = await listAgents(opts.gatewayUrl).catch(() => [] as AgentSummary[]);
   return agents.map((a) => ({
     agentId: a.id,
     name: cap(a.displayName ?? a.id),

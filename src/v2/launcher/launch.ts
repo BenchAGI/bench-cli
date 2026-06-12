@@ -1,5 +1,5 @@
 // launch.ts — the BenchAGI launcher orchestrator: boot → update gate → auth gate
-// → entitled-agent picker → per-agent handoff (cloud default, local power-option).
+// → entitled-agent picker → per-agent handoff (tunnel, direct harness, or local).
 
 import { c, eprintln, println } from "../render/ansi.js";
 import { CLI_VERSION } from "../commands/version.js";
@@ -12,24 +12,31 @@ import { checkForUpdate, updateBanner } from "./updates.js";
 import { hasAccountToken, loadAccount, resolveApiBase } from "./account.js";
 import { resolveRoster } from "./roster.js";
 import { runCloudSeat } from "./cloud-seat.js";
-import { runLocalSeat } from "./seat.js";
-import { runPicker } from "./picker.js";
+import { runLocalClaudeSeat, runLocalCodexSeat } from "./seat.js";
+import { runPicker, type PickerEffort } from "./picker.js";
 
 export interface LaunchOpts {
   liveness?: Liveness;
   full?: boolean;
   noThinking?: boolean;
   classic?: boolean;
+  directGatewayUrl?: string;
   gatewayUrl?: string;
   traceFramesPath?: string;
 }
 
+const DEFAULT_DIRECT_GATEWAY_URL = "ws://127.0.0.1:18789";
+
 export async function runLaunch(opts: LaunchOpts = {}): Promise<void> {
   await playBoot({});
   await maybePromptUpdate();
-  await ensureAuthed();
 
-  const agents = await resolveRoster();
+  let agents = await resolveRoster({ gatewayUrl: opts.gatewayUrl ?? opts.directGatewayUrl });
+  if (!agents.length && !(await hasUsableAuth()) && !process.env.BENCHAGI_NO_LOGIN) {
+    println(c.dim("Sign in to use your company agents…"));
+    await commandAuthLogin();
+    agents = await resolveRoster({ gatewayUrl: opts.gatewayUrl ?? opts.directGatewayUrl });
+  }
   if (!agents.length) {
     eprintln(c.yellow("No agents are provisioned for your account yet."));
     eprintln(c.dim("  • Make sure you're signed in:  benchagi auth login"));
@@ -39,27 +46,70 @@ export async function runLaunch(opts: LaunchOpts = {}): Promise<void> {
   }
 
   for (;;) {
-    const choice = await runPicker(agents);
+    const choice = await runPicker(agents, {
+      initialEffort: initialPickerEffort(),
+      initialThinking: opts.noThinking ? "off" : "on",
+    });
     if (!choice || choice.mode === "quit" || !choice.agent) {
       println(c.dim("  Until next flight."));
       break;
     }
-    if (choice.mode === "local") {
-      await runLocalSeat(choice.agent);
+    const seatSettings = {
+      model: choice.model,
+      effort: choice.effort,
+      thinking: choice.thinking,
+    };
+    if (choice.mode === "local-claude") {
+      await runLocalClaudeSeat(choice.agent, {
+        gatewayUrl: opts.directGatewayUrl ?? opts.gatewayUrl,
+        ...seatSettings,
+      });
       continue;
     }
-    await runCloudSeat(choice.agent.agentId, opts); // cloud = default (company allotment)
+    if (choice.mode === "local-codex") {
+      await runLocalCodexSeat(choice.agent, {
+        gatewayUrl: opts.directGatewayUrl ?? opts.gatewayUrl,
+        ...seatSettings,
+      });
+      continue;
+    }
+    if (choice.mode === "direct") {
+      const gatewayUrl = await resolveDirectGatewayUrl(opts.directGatewayUrl);
+      await runCloudSeat(choice.agent.agentId, { ...opts, ...seatSettings, gatewayUrl });
+      continue;
+    }
+    await runCloudSeat(choice.agent.agentId, { ...opts, ...seatSettings }); // tunnel = default Bench/company harness path
   }
 }
 
-async function ensureAuthed(): Promise<void> {
-  if (process.env.BENCHAGI_NO_LOGIN) return;
+function initialPickerEffort(): PickerEffort {
+  const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "high").toLowerCase();
+  if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") {
+    return value;
+  }
+  return "high";
+}
+
+async function resolveDirectGatewayUrl(configured?: string): Promise<string> {
+  const direct = (configured || process.env.BENCHAGI_DIRECT_GATEWAY_URL || "").trim();
+  if (direct) return direct;
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = (await rl.question(`  direct gateway URL [${DEFAULT_DIRECT_GATEWAY_URL}] `)).trim();
+    return answer || DEFAULT_DIRECT_GATEWAY_URL;
+  } catch {
+    return DEFAULT_DIRECT_GATEWAY_URL;
+  } finally {
+    rl.close();
+  }
+}
+
+async function hasUsableAuth(): Promise<boolean> {
   const account = await loadAccount();
-  if (hasAccountToken(account)) return;
+  if (hasAccountToken(account)) return true;
   const token = await loadFreshFirebaseIdToken().catch(() => null);
-  if (token) return;
-  println(c.dim("Sign in to use your company agents…"));
-  await commandAuthLogin();
+  return Boolean(token);
 }
 
 async function maybePromptUpdate(): Promise<void> {

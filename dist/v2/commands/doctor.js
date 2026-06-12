@@ -40,6 +40,16 @@ export async function commandDoctor() {
             else {
                 println(ok("required methods present"));
             }
+            if (policy.methods.includes("local-seat.capture")) {
+                println(ok("local seat capture RPC present"));
+            }
+            else if (policy.methods.includes("system-event")) {
+                println(warn("local-seat.capture missing; local seats will use system-event fallback"));
+            }
+            else {
+                println(bad("missing local seat bridge route: local-seat.capture or system-event required"));
+                exitCode = 6;
+            }
             const tools = policy.events.includes("session.tool") || policy.methods.length > 0;
             void tools;
             println(c.dim(`  policy: maxPayload=${policy.policy.maxPayload}B, tickInterval=${policy.policy.tickIntervalMs}ms`));

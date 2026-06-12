@@ -1,6 +1,6 @@
 // copy-assets.mjs — copy the JS launcher assets (boot cinematic) that tsc does
 // not compile (src/v2/assets/*.mjs) into dist/v2/assets/ after a build, plus the
-// seat .claude/ tree (status line + attention hooks + output style + settings).
+// seat support trees (.claude/.codex) used by local Claude Code and Codex seats.
 import { copyFile, cp, mkdir, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,14 +19,19 @@ for (const f of await readdir(src)) {
   }
 }
 
-// The .claude/ tree (nested, mixed file types) for the local seat.
-let claudeFiles = 0;
-try {
-  await cp(join(src, ".claude"), join(dest, ".claude"), { recursive: true });
-  for (const sub of await readdir(join(dest, ".claude"), { recursive: true })) {
-    if (/\.(mjs|md|json)$/.test(sub)) claudeFiles += 1;
+async function copyTree(name) {
+  let copied = 0;
+  try {
+    await cp(join(src, name), join(dest, name), { recursive: true });
+    for (const sub of await readdir(join(dest, name), { recursive: true })) {
+      if (/\.(mjs|md|json|toml)$/.test(sub)) copied += 1;
+    }
+  } catch {
+    // optional tree missing
   }
-} catch {
-  // no .claude assets → skip
+  return copied;
 }
-console.log(`copy-assets: ${n} asset(s) + ${claudeFiles} .claude file(s) → dist/v2/assets/`);
+
+const claudeFiles = await copyTree(".claude");
+const codexFiles = await copyTree(".codex");
+console.log(`copy-assets: ${n} asset(s) + ${claudeFiles} .claude file(s) + ${codexFiles} .codex file(s) -> dist/v2/assets/`);
