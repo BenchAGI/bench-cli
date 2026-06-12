@@ -41,7 +41,7 @@ test("does not corrupt an existing ANSI prefix (e.g. the Aurelius> label)", () =
 test("first-match-wins: a date inside a URL is not separately recolored", () => {
   // the URL is matched whole; its internal digits/date are not re-processed
   const out = highlight("ref https://x.com/2026-06-07/report");
-  assert.ok(out.includes("https://x.com/2026-06-07/report"), "URL kept whole");
+  assert.equal(out, "ref https://x.com/2026-06-07/report");
 });
 
 test("multiple decorations on one line all strip cleanly", () => {
