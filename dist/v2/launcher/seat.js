@@ -115,7 +115,7 @@ async function captureLauncherEvent(params) {
         launcherVersion: CLI_VERSION,
         providerVersion: params.agent.modelShort,
         source: "benchagi-launcher",
-        ts: Date.now(),
+        ts: new Date().toISOString(),
         wake: params.wake ?? false,
     }, { gatewayUrl: params.gatewayUrl });
 }

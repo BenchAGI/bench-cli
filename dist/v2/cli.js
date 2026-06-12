@@ -21,7 +21,7 @@ export async function run(argv) {
     }
     switch (parsed.command) {
         case "doctor":
-            await commandDoctor();
+            await commandDoctor({ report: parsed.report, attachPath: parsed.attachPath });
             return;
         case "auth":
             await runAuth(parsed.positional);
@@ -131,6 +131,7 @@ function parseArgs(argv) {
         full: false,
         noThinking: false,
         classic: false,
+        report: false,
         positional: [],
     };
     for (let i = 0; i < argv.length; i++) {
@@ -153,6 +154,18 @@ function parseArgs(argv) {
         }
         if (arg === "--classic") {
             out.classic = true;
+            continue;
+        }
+        if (arg === "--report") {
+            out.report = true;
+            continue;
+        }
+        if (arg === "--attach") {
+            out.attachPath = argv[++i];
+            continue;
+        }
+        if (arg.startsWith("--attach=")) {
+            out.attachPath = arg.slice("--attach=".length);
             continue;
         }
         if (arg === "--gateway") {
@@ -221,7 +234,8 @@ Usage:
   benchagi agents list             list configured agents
   benchagi agents use <name>       set default agent
 
-  benchagi doctor                  diagnostics
+  benchagi doctor                  diagnostics (+ gateway log locations)
+  benchagi doctor --report         file the diagnostics on the BenchAGI Forge
   benchagi version                 print version
 
 Flags:
@@ -230,6 +244,8 @@ Flags:
   --full                   expand all tool output by default
   --no-thinking            hide thinking deltas
   --classic                use the classic readline REPL (skip the full-screen TUI)
+  --report                 (doctor) file the checks as a Forge diagnostics ticket
+  --attach <path>          (doctor --report) include a runbook file in the report
   --gateway <ws-url>       default tunnel/harness gateway for chat/Enter mode
   --direct-gateway <ws-url> gateway used by launcher direct-harness mode (d)
   --trace-frames <path>    append raw gateway WS frames as JSONL

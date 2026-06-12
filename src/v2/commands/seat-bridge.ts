@@ -43,7 +43,7 @@ export type SeatCapture = {
   launcherVersion?: string;
   providerVersion?: string;
   source?: string;
-  ts: number;
+  ts: string;
   wake?: boolean;
 };
 
@@ -228,7 +228,7 @@ export function buildSeatCaptureFromEnv(args: {
     launcherVersion: CLI_VERSION,
     providerVersion: process.env.BENCHAGI_SEAT_PROVIDER_VERSION,
     source: "benchagi-seat-bridge",
-    ts: Date.now(),
+    ts: new Date().toISOString(),
     wake: args.wake ?? defaultWakeForEvent(args.event),
   };
 }

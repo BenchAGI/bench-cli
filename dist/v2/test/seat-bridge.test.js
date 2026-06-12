@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { buildSeatSystemEventText, defaultWakeForEvent, extractHookCaptureText, normalizeSeatEvent, } from "../commands/seat-bridge.js";
+import { buildSeatCaptureFromEnv, buildSeatSystemEventText, defaultWakeForEvent, extractHookCaptureText, normalizeSeatEvent, } from "../commands/seat-bridge.js";
 import { buildCodexLaunchArgs, codexProjectTrustConfig, } from "../launcher/seat.js";
 test("seat bridge extracts prompt text from JSON hook payloads", () => {
     const extracted = extractHookCaptureText(JSON.stringify({ prompt: "review the launch" }), "user_prompt");
@@ -16,6 +16,14 @@ test("seat bridge only wakes harness for prompt-like events by default", () => {
     assert.equal(defaultWakeForEvent("summary"), true);
     assert.equal(defaultWakeForEvent("session_stop"), true);
     assert.equal(defaultWakeForEvent("tool_result"), false);
+});
+test("seat bridge emits OpenClaw-compatible ISO timestamps", () => {
+    const capture = buildSeatCaptureFromEnv({
+        event: "user_prompt",
+        rawHookPayload: JSON.stringify({ prompt: "review the launch" }),
+    });
+    assert.equal(typeof capture.ts, "string");
+    assert.ok(Number.isFinite(Date.parse(capture.ts)), capture.ts);
 });
 test("Codex seats force hooks on for the generated trusted workspace", () => {
     const workspace = "/Users/example/.config/benchagi/codex-seat-workspace";
@@ -48,6 +56,6 @@ test("seat bridge formats fallback system events without raw transcript flood", 
         event: "user_prompt",
         summary: "review the launcher bridge",
         text: "review the launcher bridge",
-        ts: 1,
+        ts: "2026-06-12T00:00:00.000Z",
     }), "Local Claude Code seat capture | agent=aurelius | event=user_prompt | summary=review the launcher bridge");
 });
