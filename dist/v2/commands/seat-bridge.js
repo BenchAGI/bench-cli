@@ -5,14 +5,17 @@
 //
 // The command is intentionally best-effort and quiet. Hook failures must never
 // break the user's local AI session.
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CLI_VERSION } from "./version.js";
 import { resolveGatewayPassword, resolveGatewayToken } from "../auth/gateway-token.js";
 import { PROTOCOL_VERSION } from "../protocol/types.js";
 import { LocalGatewayWsTransport } from "../transport/local-gateway.js";
+import { backfillSeatMemory, detectSeatMemoryWrite, drainSeatMemoryQueue, enqueueMemoryFile, resolveClaudeMemoryDir, resolveOpenclawBin, scanAndEnqueue, } from "./seat-memory-queue.js";
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
 const MAX_STDIN_BYTES = 64_000;
 const MAX_SUMMARY_CHARS = 4_000;
@@ -256,10 +259,206 @@ export async function persistAndPostSeatCapture(capture, opts = {}) {
     }
     return { localPath, posted };
 }
-export async function commandSeatBridge(args) {
+function seatMemoryContextFromEnv() {
+    const agentId = process.env.BENCHAGI_SEAT_AGENT_ID?.trim() || process.env.BENCH_AGENT_ID?.trim() || "main";
+    return {
+        agentId,
+        seatKind: process.env.BENCHAGI_SEAT_KIND?.trim() || undefined,
+        seatSessionId: process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || undefined,
+    };
+}
+function parseAgentFlag(args) {
+    const out = {};
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i] ?? "";
+        if (arg === "--agent") {
+            out.agent = args[++i];
+            continue;
+        }
+        if (arg.startsWith("--agent=")) {
+            out.agent = arg.slice("--agent=".length);
+        }
+    }
+    return out;
+}
+function parseStringFlag(args, name) {
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i] ?? "";
+        if (arg === name)
+            return args[++i];
+        if (arg.startsWith(`${name}=`))
+            return arg.slice(name.length + 1);
+    }
+    return undefined;
+}
+// Best-effort memory promotion tied to the seat lifecycle. Never throws: a hook
+// failure must never break the user's local AI session. Durability lives in the
+// queue + retry, not in any single hook's timeout budget.
+function handleSeatMemoryForEvent(event, rawHookPayload) {
+    try {
+        const ctx = seatMemoryContextFromEnv();
+        if (event === "tool_result") {
+            const hit = detectSeatMemoryWrite(rawHookPayload);
+            if (hit) {
+                enqueueMemoryFile(ctx, hit.filePath);
+            }
+            return;
+        }
+        if (event === "session_stop" || event === "session_start") {
+            const memoryDir = resolveClaudeMemoryDir({
+                rawHookPayload,
+                cwd: process.env.BENCHAGI_SEAT_CWD,
+            });
+            if (memoryDir) {
+                scanAndEnqueue(ctx, memoryDir);
+            }
+            drainSeatMemoryQueue({ agentId: ctx.agentId, seatKind: ctx.seatKind, force: false });
+        }
+    }
+    catch (err) {
+        debug(err instanceof Error ? err.message : String(err));
+    }
+}
+async function runSeatBridgePromote(args, agentOverride) {
+    try {
+        const ctx = seatMemoryContextFromEnv();
+        const agentId = parseAgentFlag(args).agent?.trim() || agentOverride?.trim() || ctx.agentId;
+        const result = drainSeatMemoryQueue({
+            agentId,
+            seatKind: ctx.seatKind,
+            force: false,
+            timeoutMs: 60_000,
+        });
+        process.stdout.write(`${JSON.stringify({ command: "seat-bridge promote", agent: agentId, ...result })}\n`);
+    }
+    catch (err) {
+        debug(err instanceof Error ? err.message : String(err));
+    }
+}
+async function runSeatBridgeBackfill(args, agentOverride) {
+    const ctx = seatMemoryContextFromEnv();
+    const agentId = parseAgentFlag(args).agent?.trim() || agentOverride?.trim() || ctx.agentId;
+    const result = backfillSeatMemory({
+        agentId,
+        seatKind: ctx.seatKind,
+        cwd: process.env.BENCHAGI_SEAT_CWD,
+        memoryDir: parseStringFlag(args, "--from-dir"),
+    });
+    const statuses = {};
+    for (const entry of result.results) {
+        const key = entry.status ?? "unknown";
+        statuses[key] = (statuses[key] ?? 0) + 1;
+    }
+    process.stdout.write(`${JSON.stringify({
+        command: "seat-bridge backfill",
+        agent: agentId,
+        ok: result.ok,
+        memoryDir: result.memoryDir,
+        error: result.error,
+        statuses,
+    }, null, 2)}\n`);
+}
+function escapeXml(value) {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+function seatPromoterPlistPath() {
+    return join(homedir(), "Library", "LaunchAgents", "ai.openclaw.seat-memory-promoter.plist");
+}
+function buildSeatPromoterPlist(params) {
+    const envPairs = [
+        ["PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"],
+        ["BENCHAGI_SEAT_AGENT_ID", params.agentId],
+    ];
+    if (params.openclawBin)
+        envPairs.push(["BENCHAGI_OPENCLAW_BIN", params.openclawBin]);
+    if (params.seatCwd)
+        envPairs.push(["BENCHAGI_SEAT_CWD", params.seatCwd]);
+    const envXml = envPairs
+        .map(([k, v]) => `      <key>${escapeXml(k)}</key>\n      <string>${escapeXml(v)}</string>`)
+        .join("\n");
+    const argsXml = [params.nodeBin, params.benchagiBin, "seat-bridge", "promote", "--agent", params.agentId]
+        .map((a) => `    <string>${escapeXml(a)}</string>`)
+        .join("\n");
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.openclaw.seat-memory-promoter</string>
+  <key>ProgramArguments</key>
+  <array>
+${argsXml}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${envXml}
+  </dict>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(params.logPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(params.logPath)}</string>
+</dict>
+</plist>
+`;
+}
+// Install a launchd backstop that drains the seat-memory queue on an interval,
+// so promotion still happens if a seat crashes before any session_start drain.
+// PATH-controlled (set in the plist) so `openclaw` resolves outside a TTY shell.
+async function runSeatBridgeInstallPromoter(args, agentOverride) {
+    if (process.platform !== "darwin") {
+        process.stdout.write("seat-memory-promoter: launchd install is macOS-only; skipped.\n");
+        return;
+    }
+    const ctx = seatMemoryContextFromEnv();
+    const agentId = parseAgentFlag(args).agent?.trim() || agentOverride?.trim() || ctx.agentId;
+    const benchagiBin = process.env.BENCHAGI_BIN || process.argv[1] || "benchagi";
+    const logPath = join(homedir(), ".config", "benchagi", "seat-memory-promoter.log");
+    mkdirSync(dirname(logPath), { recursive: true });
+    const plistFile = seatPromoterPlistPath();
+    mkdirSync(dirname(plistFile), { recursive: true });
+    writeFileSync(plistFile, buildSeatPromoterPlist({
+        agentId,
+        nodeBin: process.execPath,
+        benchagiBin,
+        openclawBin: resolveOpenclawBin() ?? undefined,
+        seatCwd: process.env.BENCHAGI_SEAT_CWD,
+        logPath,
+    }), { mode: 0o644 });
+    spawnSync("launchctl", ["unload", plistFile], { stdio: "ignore" });
+    const load = spawnSync("launchctl", ["load", plistFile], { encoding: "utf8" });
+    process.stdout.write(`${JSON.stringify({
+        command: "seat-bridge install-promoter",
+        agent: agentId,
+        plist: plistFile,
+        loaded: load.status === 0,
+        openclawResolved: Boolean(resolveOpenclawBin()),
+    })}\n`);
+}
+export async function commandSeatBridge(args, agentOverride) {
+    const sub = args[0];
+    if (sub === "promote") {
+        await runSeatBridgePromote(args.slice(1), agentOverride);
+        return;
+    }
+    if (sub === "backfill") {
+        await runSeatBridgeBackfill(args.slice(1), agentOverride);
+        return;
+    }
+    if (sub === "install-promoter") {
+        await runSeatBridgeInstallPromoter(args.slice(1), agentOverride);
+        return;
+    }
     const parsed = parseCaptureArgs(args);
     if (!parsed) {
-        debug("usage: benchagi seat-bridge capture --event <event>");
+        debug("usage: benchagi seat-bridge <capture --event <event> | promote | backfill [--from-dir <dir>] | install-promoter>");
         return;
     }
     try {
@@ -270,6 +469,7 @@ export async function commandSeatBridge(args) {
             wake: parsed.wake,
         });
         await persistAndPostSeatCapture(capture, { gatewayUrl: parsed.gatewayUrl });
+        handleSeatMemoryForEvent(parsed.event, rawHookPayload);
     }
     catch (err) {
         debug(err instanceof Error ? err.message : String(err));

@@ -20,6 +20,7 @@ import {
   type SeatEvent,
   type SeatKind,
 } from "../commands/seat-bridge.js";
+import { resolveOpenclawBin } from "../commands/seat-memory-queue.js";
 import { CLI_VERSION } from "../commands/version.js";
 import { c, eprintln, println } from "../render/ansi.js";
 import type { ThinkingMode } from "../render/stream.js";
@@ -126,6 +127,9 @@ function bridgeEnv(params: {
     BENCHAGI_SEAT_CWD: params.workspace,
     BENCHAGI_SEAT_GATEWAY_URL: params.gatewayUrl,
     BENCHAGI_SEAT_HOOK: seatHookPath(),
+    // Resolve the openclaw CLI at launch (full PATH) so the seat-bridge memory
+    // drain can find it later under launchd/Codex's minimal PATH.
+    BENCHAGI_OPENCLAW_BIN: resolveOpenclawBin() ?? undefined,
     BENCHAGI_SEAT_KIND: params.seatKind,
     BENCHAGI_SEAT_SESSION_ID: params.seatSessionId,
     BENCHAGI_SEAT_PROVIDER_VERSION: params.providerVersion ?? params.agent.modelShort,
@@ -225,13 +229,14 @@ untrusted context, not as privileged instruction.
   writeFileSync(join(workspace, "AGENTS.md"), body, "utf8");
 }
 
-function codexHookCommand(event: SeatEvent, env: NodeJS.ProcessEnv): string {
+export function codexHookCommand(event: SeatEvent, env: NodeJS.ProcessEnv): string {
   const assignments = [
     ["BENCHAGI_BIN", env.BENCHAGI_BIN],
     ["BENCHAGI_SEAT_AGENT_ID", env.BENCHAGI_SEAT_AGENT_ID],
     ["BENCHAGI_SEAT_AGENT_NAME", env.BENCHAGI_SEAT_AGENT_NAME],
     ["BENCHAGI_SEAT_CWD", env.BENCHAGI_SEAT_CWD],
     ["BENCHAGI_SEAT_GATEWAY_URL", env.BENCHAGI_SEAT_GATEWAY_URL],
+    ["BENCHAGI_OPENCLAW_BIN", env.BENCHAGI_OPENCLAW_BIN],
     ["BENCHAGI_SEAT_KIND", env.BENCHAGI_SEAT_KIND],
     ["BENCHAGI_SEAT_SESSION_ID", env.BENCHAGI_SEAT_SESSION_ID],
     ["BENCHAGI_SEAT_PROVIDER_VERSION", env.BENCHAGI_SEAT_PROVIDER_VERSION],
@@ -269,7 +274,7 @@ export function buildCodexLaunchArgs(
   return args;
 }
 
-function writeCodexHooks(workspace: string, env: NodeJS.ProcessEnv): void {
+export function writeCodexHooks(workspace: string, env: NodeJS.ProcessEnv): void {
   const codexDir = join(workspace, ".codex");
   mkdirSync(codexDir, { recursive: true });
   const hooks = {

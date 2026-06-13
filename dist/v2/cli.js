@@ -34,7 +34,7 @@ export async function run(argv) {
             await runAgents(parsed.positional, parsed.gatewayUrl);
             return;
         case "seat-bridge":
-            await commandSeatBridge(parsed.positional);
+            await commandSeatBridge(parsed.positional, parsed.agent);
             return;
         case "launch":
             await runLaunch({
