@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # make-dock-app.sh — build the clickable "BenchAGI" Dock app (the glyph). Clicking it
-# opens a terminal running `benchagi`: boot cinematic → agent selector → choose a
-# CLOUD seat (Enter) or a LOCAL Claude Code seat (l).
+# opens a terminal running `benchagi`: boot cinematic → agent selector → configure
+# Cloud, Direct, Claude, or Codex seat mode → launch.
 #
 # The app is SELF-CONTAINED (its launch command lives inside the bundle and resolves
 # `benchagi` on PATH at click time) so the same build works for: local install

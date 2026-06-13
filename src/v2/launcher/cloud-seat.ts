@@ -177,6 +177,9 @@ export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts =
     assistantLabel: cap(selectedAgent.id), // "Aurelius>" instead of "agent>"
     gatewayUrl: opts.gatewayUrl,
   });
+  if (opts.model?.trim()) {
+    await runner.setModel(opts.model.trim());
+  }
   if (thinkingMode) runner.setThinking(thinkingMode);
   try {
     await runner.connect();
