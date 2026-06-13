@@ -89,12 +89,14 @@ fi
 ok "Node.js $NODE_VERSION is available"
 
 step 'Checking OpenClaw'
-if ! command -v openclaw >/dev/null 2>&1; then
+OPENCLAW_BIN=$(command -v openclaw 2>/dev/null || true)
+if [ -z "$OPENCLAW_BIN" ]; then
   warn 'OpenClaw not found — the CLI will install, but you need OpenClaw for the local seat:'
   warn '  npm install -g openclaw'
   OPENCLAW_MISSING=1
+else
+  ok "OpenClaw is available at $OPENCLAW_BIN"
 fi
-ok "OpenClaw is available at $(command -v openclaw)"
 
 step 'Selecting package manager'
 if command -v pnpm >/dev/null 2>&1; then
