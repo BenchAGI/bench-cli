@@ -59,7 +59,7 @@ export async function run(argv: string[]): Promise<void> {
       return;
 
     case "seat-bridge":
-      await commandSeatBridge(parsed.positional);
+      await commandSeatBridge(parsed.positional, parsed.agent);
       return;
 
     case "launch":
