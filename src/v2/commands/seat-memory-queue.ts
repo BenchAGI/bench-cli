@@ -353,7 +353,7 @@ function markRecord(record: SeatMemoryRecord, outcome: PromoteCliOutcome): void 
   record.lastAttemptAt = nowMs();
   if (!outcome.ok) {
     record.lastError = outcome.error ?? "promote failed";
-    record.state = record.attempts >= MAX_ATTEMPTS ? "poisoned" : "pending";
+    record.state = "pending";
     writeRecord(record);
     return;
   }
@@ -380,7 +380,7 @@ function markRecord(record: SeatMemoryRecord, outcome: PromoteCliOutcome): void 
 export type DrainResult = { drained: number; ok: boolean; promoted: number; error?: string };
 
 /**
- * Drain pending/failed (non-poisoned) records by invoking `openclaw memory
+ * Drain pending records by invoking `openclaw memory
  * promote-file --from-dir` once per dirty memory dir, then update record state.
  * Best-effort: on any failure the records stay pending for the next retry.
  */
@@ -391,9 +391,7 @@ export function drainSeatMemoryQueue(params: {
   force?: boolean;
   timeoutMs?: number;
 }): DrainResult {
-  const records = listSeatMemoryRecords(params.agentId).filter(
-    (r) => r.state === "pending" || r.state === "failed",
-  );
+  const records = listSeatMemoryRecords(params.agentId).filter((r) => r.state === "pending");
   if (records.length === 0) return { drained: 0, ok: true, promoted: 0 };
 
   const openclawBin = resolveOpenclawBin(params.openclawBin);
@@ -402,7 +400,7 @@ export function drainSeatMemoryQueue(params: {
       record.attempts += 1;
       record.lastAttemptAt = nowMs();
       record.lastError = "openclaw-not-found";
-      if (record.attempts >= MAX_ATTEMPTS) record.state = "poisoned";
+      record.state = "pending";
       writeRecord(record);
     }
     return { drained: 0, ok: false, promoted: 0, error: "openclaw-not-found" };
@@ -451,10 +449,11 @@ export function backfillSeatMemory(params: {
   agentId: string;
   seatKind?: string;
   cwd?: string;
+  memoryDir?: string;
   openclawBin?: string;
   timeoutMs?: number;
 }): { ok: boolean; memoryDir: string | null; results: PromoteCliResultEntry[]; error?: string } {
-  const memoryDir = resolveClaudeMemoryDir({ cwd: params.cwd });
+  const memoryDir = params.memoryDir?.trim() || resolveClaudeMemoryDir({ cwd: params.cwd });
   if (!memoryDir || !existsSync(memoryDir)) {
     return { ok: false, memoryDir, results: [], error: "claude-memory-dir-not-found" };
   }

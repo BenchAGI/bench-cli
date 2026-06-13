@@ -352,6 +352,15 @@ function parseAgentFlag(args: string[]): { agent?: string } {
   return out;
 }
 
+function parseStringFlag(args: string[], name: string): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? "";
+    if (arg === name) return args[++i];
+    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
+  }
+  return undefined;
+}
+
 // Best-effort memory promotion tied to the seat lifecycle. Never throws: a hook
 // failure must never break the user's local AI session. Durability lives in the
 // queue + retry, not in any single hook's timeout budget.
@@ -403,6 +412,7 @@ async function runSeatBridgeBackfill(args: string[], agentOverride?: string): Pr
     agentId,
     seatKind: ctx.seatKind,
     cwd: process.env.BENCHAGI_SEAT_CWD,
+    memoryDir: parseStringFlag(args, "--from-dir"),
   });
   const statuses: Record<string, number> = {};
   for (const entry of result.results) {
@@ -541,7 +551,7 @@ export async function commandSeatBridge(args: string[], agentOverride?: string):
   const parsed = parseCaptureArgs(args);
   if (!parsed) {
     debug(
-      "usage: benchagi seat-bridge <capture --event <event> | promote | backfill | install-promoter>",
+      "usage: benchagi seat-bridge <capture --event <event> | promote | backfill [--from-dir <dir>] | install-promoter>",
     );
     return;
   }

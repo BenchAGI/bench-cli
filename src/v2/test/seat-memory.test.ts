@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
+  backfillSeatMemory,
   contentHashOf,
   detectSeatMemoryWrite,
   drainSeatMemoryQueue,
@@ -113,12 +114,16 @@ test("drainSeatMemoryQueue keeps records pending when openclaw fails (offline)",
   enqueueMemoryFile(ctx, file);
   const failBin = writeFakeOpenclaw("openclaw-fail", "#!/bin/sh\nexit 3\n");
 
-  const result = drainSeatMemoryQueue({ agentId: "aurelius", openclawBin: failBin, timeoutMs: 5000 });
+  let result = drainSeatMemoryQueue({ agentId: "aurelius", openclawBin: failBin, timeoutMs: 5000 });
   assert.equal(result.ok, false);
   assert.equal(result.promoted, 0);
+  for (let i = 0; i < 8; i += 1) {
+    result = drainSeatMemoryQueue({ agentId: "aurelius", openclawBin: failBin, timeoutMs: 5000 });
+    assert.equal(result.ok, false);
+  }
   const records = listSeatMemoryRecords("aurelius");
   assert.equal(records[0]?.state, "pending");
-  assert.equal(records[0]?.attempts, 1);
+  assert.equal(records[0]?.attempts, 9);
   assert.ok(records[0]?.lastError);
 });
 
@@ -143,4 +148,50 @@ test("drainSeatMemoryQueue marks records promoted on a successful promote-file r
   // Re-draining is a no-op (promoted records are not retried).
   const again = drainSeatMemoryQueue({ agentId: "aurelius", openclawBin: okBin, timeoutMs: 5000 });
   assert.equal(again.drained, 0);
+});
+
+test("drainSeatMemoryQueue does not retry terminal failed records", () => {
+  const ctx = { agentId: "aurelius", seatKind: "claude-code", seatSessionId: "s1" };
+  const file = writeMemoryFile("secret.md", "blocked\n");
+  enqueueMemoryFile(ctx, file);
+  const hash = contentHashOf("blocked\n");
+  const blockedBin = writeFakeOpenclaw(
+    "openclaw-blocked",
+    `#!/bin/sh\ncat <<'EOF'\n{"results":[{"slug":"secret","target":"/w/memory/seat/secret.md","status":"secret-blocked","contentHash":"${hash}","reason":"secret_guard_blocked:openai-key"}]}\nEOF\n`,
+  );
+
+  const first = drainSeatMemoryQueue({ agentId: "aurelius", openclawBin: blockedBin, timeoutMs: 5000 });
+  assert.equal(first.drained, 1);
+  let records = listSeatMemoryRecords("aurelius");
+  assert.equal(records[0]?.state, "failed");
+  assert.equal(records[0]?.attempts, 1);
+
+  const second = drainSeatMemoryQueue({ agentId: "aurelius", openclawBin: blockedBin, timeoutMs: 5000 });
+  assert.equal(second.drained, 0);
+  records = listSeatMemoryRecords("aurelius");
+  assert.equal(records[0]?.attempts, 1);
+});
+
+test("backfillSeatMemory accepts an explicit memory directory", () => {
+  const dir = join(tmpRoot, "manual-memory");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "manual.md");
+  writeFileSync(file, "manual promote\n");
+  const hash = contentHashOf("manual promote\n");
+  const okBin = writeFakeOpenclaw(
+    "openclaw-backfill",
+    `#!/bin/sh\ncat <<'EOF'\n{"results":[{"slug":"manual","target":"/w/memory/seat/manual.md","status":"created","contentHash":"${hash}"}]}\nEOF\n`,
+  );
+
+  const result = backfillSeatMemory({
+    agentId: "aurelius",
+    seatKind: "claude-code",
+    memoryDir: dir,
+    openclawBin: okBin,
+    timeoutMs: 5000,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.memoryDir, dir);
+  const records = listSeatMemoryRecords("aurelius");
+  assert.equal(records[0]?.state, "promoted");
 });
