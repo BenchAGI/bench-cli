@@ -632,25 +632,42 @@ export class ChatRunner {
   }
 
   private async ensureSession(): Promise<void> {
-    // ANVIL-3 P1 fix: SessionsCreateParamsSchema rejects `verboseLevel` as an
-    // additional property. Create with only allowed fields, then assert
-    // verboseLevel via sessions.patch (SPEC §5.3).
-    const resp = await this.transport
-      .request("sessions.create", {
-        agentId: this.opts.agentId,
-        ...(this.modelOverride ? { model: this.modelOverride } : {}), // /model takes effect at create
-      })
-      .catch(() => null);
+    // The launch-selected model (modelPrimary) and effort (thinkingLevel) are applied
+    // at session CREATE, which only needs operator.write — every seat has it. A later
+    // `/model` sets modelOverride, which takes precedence. thinkingLevel at create needs
+    // a gateway that accepts it; older/strict gateways reject the extra field
+    // (SessionsCreateParamsSchema is strict — it also rejects verboseLevel), so we retry
+    // create without it and fall back to the (operator.admin-gated) post-create patch.
+    const createModel = this.modelOverride ?? this.opts.modelPrimary ?? null;
+    const thinkingLevel = this.opts.thinkingLevel ?? null;
+    const baseParams: Record<string, unknown> = { agentId: this.opts.agentId };
+    if (createModel) baseParams.model = createModel;
+
+    let needsThinkingPatch = Boolean(thinkingLevel);
+    let resp: unknown = null;
+    if (thinkingLevel) {
+      resp = await this.transport
+        .request("sessions.create", { ...baseParams, thinkingLevel })
+        .then((r) => {
+          needsThinkingPatch = false; // accepted at create (operator.write)
+          return r;
+        })
+        .catch(() => null);
+    }
+    if (!resp) {
+      resp = await this.transport.request("sessions.create", baseParams).catch(() => null);
+    }
     const key = (resp as { key?: string; sessionKey?: string } | null)?.key
       ?? (resp as { key?: string; sessionKey?: string } | null)?.sessionKey;
-    if (typeof key === "string" && key.length > 0) {
-      this.sessionKey = key;
-    } else {
-      this.sessionKey = `agent:${this.opts.agentId}`;
-    }
+    this.sessionKey = typeof key === "string" && key.length > 0
+      ? key
+      : `agent:${this.opts.agentId}`;
     await this.ensureVerboseEvents();
-    if (this.opts.thinkingLevel) {
-      await this.patchSession({ thinkingLevel: this.opts.thinkingLevel });
+    if (thinkingLevel && needsThinkingPatch) {
+      const ok = await this.patchSession({ thinkingLevel });
+      if (!ok) {
+        eprintln(c.dim(`(effort '${thinkingLevel}' needs operator.admin on this gateway; running on the agent's default level)`));
+      }
     }
   }
 

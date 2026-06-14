@@ -4,6 +4,7 @@
 
 import { listAgents, type AgentSummary } from "../commands/agents.js";
 import { resolveEntitledAgents } from "./entitlements.js";
+import { shortModel as shortModelId } from "./models.js";
 
 export interface LauncherAgent {
   agentId: string;
@@ -14,17 +15,8 @@ export interface LauncherAgent {
   emoji: string;
 }
 
-const MODEL_SHORT: Record<string, string> = {
-  "claude-fable-5": "Fable 5",
-  "claude-opus-4-8": "Opus 4.8",
-  "claude-opus-4-6": "Opus 4.6",
-  "claude-sonnet-4-6": "Sonnet 4.6",
-  "claude-haiku-4-5": "Haiku 4.5",
-};
-
 function shortModel(m?: string): string {
-  if (!m) return "—";
-  return MODEL_SHORT[m] ?? m;
+  return shortModelId(m) || "—";
 }
 
 const cap = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s);

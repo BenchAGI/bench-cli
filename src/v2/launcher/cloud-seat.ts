@@ -15,6 +15,7 @@ import { runTui } from "../tui/app.js";
 import type { Liveness } from "../probe/capability.js";
 import type { ThinkingMode } from "../render/stream.js";
 import type { PickerEffort } from "./picker.js";
+import { shortModel } from "./models.js";
 
 export type AgentLite = { id: string; model?: string };
 
@@ -25,14 +26,6 @@ const AMBER = "\x1b[38;2;255;184;74m";
 const SDIM = "\x1b[38;2;124;124;135m";
 const SRESET = "\x1b[0m";
 
-const MODEL_SHORT: Record<string, string> = {
-  "claude-fable-5": "Fable 5",
-  "claude-opus-4-8": "Opus 4.8",
-  "claude-opus-4-6": "Opus 4.6",
-  "claude-sonnet-4-6": "Sonnet 4.6",
-  "claude-haiku-4-5": "Haiku 4.5",
-};
-const shortModel = (m?: string): string => (m ? (MODEL_SHORT[m] ?? m) : "");
 const cap = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
 export async function locateAgent(name: string | null, gatewayUrl?: string): Promise<AgentLite> {

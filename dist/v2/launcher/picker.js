@@ -3,34 +3,17 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 // stays clean. Returns the chosen agent + connection mode/settings.
 import { useState } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
+import { modelChoices as modelChoicesForEnv } from "./models.js";
+import { effortChoices, effortIndexFor, DEFAULT_EFFORT } from "./effort.js";
 const IR = "#ff2d55";
-const DIM = "#7c7c87";
+// Secondary text. Brightened from the old #7c7c87 (very low contrast on dark
+// terminals) for legibility; inactive option rows also drop dimColor (below).
+const DIM = "#b9bcc8";
 const MODES = [
     { label: "Cloud", value: "tunnel" },
     { label: "Direct", value: "direct" },
     { label: "Claude", value: "local-claude" },
     { label: "Codex", value: "local-codex" },
-];
-const CLAUDE_MODELS = [
-    { label: "Default", value: undefined },
-    { label: "Fable 5", value: "claude-fable-5" },
-    { label: "Sonnet 4.6", value: "claude-sonnet-4-6" },
-    { label: "Opus 4.8", value: "claude-opus-4-8" },
-    { label: "Haiku 4.5", value: "claude-haiku-4-5" },
-];
-const CODEX_MODELS = [
-    { label: "Default", value: undefined },
-    { label: "GPT-5.5", value: "gpt-5.5" },
-    { label: "GPT-5.4", value: "gpt-5.4" },
-    { label: "Mini", value: "gpt-5.4-mini" },
-    { label: "Spark", value: "gpt-5.3-codex-spark" },
-];
-const EFFORTS = [
-    { label: "Low", value: "low" },
-    { label: "Medium", value: "medium" },
-    { label: "High", value: "high" },
-    { label: "XHigh", value: "xhigh" },
-    { label: "Ultra Code", value: "max" },
 ];
 const THINKING = [
     { label: "Show", value: "on" },
@@ -50,13 +33,16 @@ function clampIndex(index, length) {
         return 0;
     return ((index % length) + length) % length;
 }
+function modelEnv(mode) {
+    return mode === "quit" ? "tunnel" : mode;
+}
 function modelChoices(mode) {
-    return mode === "local-codex" ? CODEX_MODELS : CLAUDE_MODELS;
+    return modelChoicesForEnv(modelEnv(mode)).map((m) => ({ label: m.label, value: m.value }));
 }
 function optionRows(label, choices, selected) {
     return choices.map((choice, index) => {
         const active = index === selected;
-        return (_jsx(Text, { color: active ? IR : undefined, bold: active, dimColor: !active, children: `${active ? " > " : "   "}${choice.label}` }, `${label}-${index}-${choice.label}`));
+        return (_jsx(Text, { color: active ? IR : undefined, bold: active, children: `${active ? " > " : "   "}${choice.label}` }, `${label}-${index}-${choice.label}`));
     });
 }
 function summaryRow(label, value, active) {
@@ -82,14 +68,15 @@ function Picker({ agents, opts, onSelect, }) {
     const [configRowIndex, setConfigRowIndex] = useState(0);
     const [modeIndex, setModeIndex] = useState(0);
     const [modelIndex, setModelIndex] = useState(0);
-    const [effortIndex, setEffortIndex] = useState(Math.max(0, EFFORTS.findIndex((choice) => choice.value === (opts.initialEffort ?? "high"))));
+    const [effortIndex, setEffortIndex] = useState(() => effortIndexFor(modelEnv(MODES[0].value), opts.initialEffort ?? DEFAULT_EFFORT));
     const [thinkingIndex, setThinkingIndex] = useState(Math.max(0, THINKING.findIndex((choice) => choice.value === (opts.initialThinking ?? "on"))));
     const selectedAgentIndex = agentIndex >= agents.length ? 0 : clampIndex(agentIndex, agents.length);
     const agent = agents[selectedAgentIndex];
     const mode = MODES[clampIndex(modeIndex, MODES.length)].value;
     const models = modelChoices(mode);
     const modelChoice = models[clampIndex(modelIndex, models.length)];
-    const effort = EFFORTS[clampIndex(effortIndex, EFFORTS.length)];
+    const efforts = effortChoices(modelEnv(mode));
+    const effort = efforts[clampIndex(effortIndex, efforts.length)];
     const thinking = THINKING[clampIndex(thinkingIndex, THINKING.length)];
     const configRow = CONFIG_ROWS[clampIndex(configRowIndex, CONFIG_ROWS.length)].value;
     const agentChoices = [
@@ -111,14 +98,16 @@ function Picker({ agents, opts, onSelect, }) {
     };
     const changeConfigValue = (delta) => {
         if (configRow === "environment") {
+            const newMode = MODES[clampIndex(modeIndex + delta, MODES.length)].value;
             setModeIndex((i) => clampIndex(i + delta, MODES.length));
-            setModelIndex(0);
+            setModelIndex(0); // model lists differ per env; reset to "Default"
+            setEffortIndex(effortIndexFor(modelEnv(newMode), effort.value)); // preserve effort by value
         }
         else if (configRow === "model") {
             setModelIndex((i) => clampIndex(i + delta, models.length));
         }
         else if (configRow === "effort") {
-            setEffortIndex((i) => clampIndex(i + delta, EFFORTS.length));
+            setEffortIndex((i) => clampIndex(i + delta, efforts.length));
         }
         else if (configRow === "thinking") {
             setThinkingIndex((i) => clampIndex(i + delta, THINKING.length));

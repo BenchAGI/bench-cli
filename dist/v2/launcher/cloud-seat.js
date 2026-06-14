@@ -11,20 +11,13 @@ import { CLI_VERSION } from "../commands/version.js";
 import { loadAccount } from "./account.js";
 import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 import { runTui } from "../tui/app.js";
+import { shortModel } from "./models.js";
 // Branded ANSI for the cloud REPL status line (matches the local seat status line).
 const IR = "\x1b[38;2;255;45;85m";
 const COPPER = "\x1b[38;2;196;122;58m";
 const AMBER = "\x1b[38;2;255;184;74m";
 const SDIM = "\x1b[38;2;124;124;135m";
 const SRESET = "\x1b[0m";
-const MODEL_SHORT = {
-    "claude-fable-5": "Fable 5",
-    "claude-opus-4-8": "Opus 4.8",
-    "claude-opus-4-6": "Opus 4.6",
-    "claude-sonnet-4-6": "Sonnet 4.6",
-    "claude-haiku-4-5": "Haiku 4.5",
-};
-const shortModel = (m) => (m ? (MODEL_SHORT[m] ?? m) : "");
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 export async function locateAgent(name, gatewayUrl) {
     const agents = await listAgents(gatewayUrl);

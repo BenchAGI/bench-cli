@@ -14,6 +14,7 @@ import { resolveRoster } from "./roster.js";
 import { runCloudSeat } from "./cloud-seat.js";
 import { runLocalClaudeSeat, runLocalCodexSeat } from "./seat.js";
 import { runPicker, type PickerEffort } from "./picker.js";
+import { ALL_EFFORTS } from "./effort.js";
 
 export interface LaunchOpts {
   liveness?: Liveness;
@@ -83,11 +84,8 @@ export async function runLaunch(opts: LaunchOpts = {}): Promise<void> {
 }
 
 function initialPickerEffort(): PickerEffort {
-  const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "high").toLowerCase();
-  if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") {
-    return value;
-  }
-  return "high";
+  const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "medium").toLowerCase();
+  return (ALL_EFFORTS as readonly string[]).includes(value) ? (value as PickerEffort) : "medium";
 }
 
 async function resolveDirectGatewayUrl(configured?: string): Promise<string> {

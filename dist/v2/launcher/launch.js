@@ -11,6 +11,7 @@ import { resolveRoster } from "./roster.js";
 import { runCloudSeat } from "./cloud-seat.js";
 import { runLocalClaudeSeat, runLocalCodexSeat } from "./seat.js";
 import { runPicker } from "./picker.js";
+import { ALL_EFFORTS } from "./effort.js";
 const DEFAULT_DIRECT_GATEWAY_URL = "ws://127.0.0.1:18789";
 export async function runLaunch(opts = {}) {
     await playBoot({});
@@ -65,11 +66,8 @@ export async function runLaunch(opts = {}) {
     }
 }
 function initialPickerEffort() {
-    const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "high").toLowerCase();
-    if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") {
-        return value;
-    }
-    return "high";
+    const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "medium").toLowerCase();
+    return ALL_EFFORTS.includes(value) ? value : "medium";
 }
 async function resolveDirectGatewayUrl(configured) {
     const direct = (configured || process.env.BENCHAGI_DIRECT_GATEWAY_URL || "").trim();
