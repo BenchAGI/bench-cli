@@ -7,6 +7,7 @@ import { Box, Text, useInput } from "ink";
 import { BRAND_HEX } from "../render/ansi.js";
 import { matchHint, SLASH_COMMANDS } from "../repl/slash.js";
 import { reduceInput } from "./input-model.js";
+import { containsMouseEvent } from "./terminal-events.js";
 export const MAX_MENU = 8;
 // How many rows the slash menu occupies for a given buffer (commands shown + the hint footer), so
 // the App can shrink the scroll viewport to fit it. 0 when the menu is closed.
@@ -31,6 +32,8 @@ export function Input({ state, onChange, busy, approvalActive, canConsumeKey, re
     };
     const setBuffer = (buffer) => onChange({ ...state, buffer, cursor: buffer.length, histIndex: null });
     useInput((input, key) => {
+        if (containsMouseEvent(input))
+            return;
         // App-level chords first.
         if (key.ctrl && input === "c") {
             if (busy)

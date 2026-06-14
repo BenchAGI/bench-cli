@@ -29,26 +29,47 @@ export async function runLaunch(opts = {}) {
         return;
     }
     for (;;) {
-        const choice = await runPicker(agents);
+        const choice = await runPicker(agents, {
+            initialEffort: initialPickerEffort(),
+            initialThinking: opts.noThinking ? "off" : "on",
+        });
         if (!choice || choice.mode === "quit" || !choice.agent) {
             println(c.dim("  Until next flight."));
             break;
         }
+        const seatSettings = {
+            model: choice.model,
+            effort: choice.effort,
+            thinking: choice.thinking,
+        };
         if (choice.mode === "local-claude") {
-            await runLocalClaudeSeat(choice.agent, { gatewayUrl: opts.directGatewayUrl ?? opts.gatewayUrl });
+            await runLocalClaudeSeat(choice.agent, {
+                gatewayUrl: opts.directGatewayUrl ?? opts.gatewayUrl,
+                ...seatSettings,
+            });
             continue;
         }
         if (choice.mode === "local-codex") {
-            await runLocalCodexSeat(choice.agent, { gatewayUrl: opts.directGatewayUrl ?? opts.gatewayUrl });
+            await runLocalCodexSeat(choice.agent, {
+                gatewayUrl: opts.directGatewayUrl ?? opts.gatewayUrl,
+                ...seatSettings,
+            });
             continue;
         }
         if (choice.mode === "direct") {
             const gatewayUrl = await resolveDirectGatewayUrl(opts.directGatewayUrl);
-            await runCloudSeat(choice.agent.agentId, { ...opts, gatewayUrl });
+            await runCloudSeat(choice.agent.agentId, { ...opts, ...seatSettings, gatewayUrl });
             continue;
         }
-        await runCloudSeat(choice.agent.agentId, opts); // tunnel = default Bench/company harness path
+        await runCloudSeat(choice.agent.agentId, { ...opts, ...seatSettings }); // tunnel = default Bench/company harness path
     }
+}
+function initialPickerEffort() {
+    const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "high").toLowerCase();
+    if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") {
+        return value;
+    }
+    return "high";
 }
 async function resolveDirectGatewayUrl(configured) {
     const direct = (configured || process.env.BENCHAGI_DIRECT_GATEWAY_URL || "").trim();

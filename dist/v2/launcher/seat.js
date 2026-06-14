@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { persistAndPostSeatCapture, resolveSeatGatewayUrl, } from "../commands/seat-bridge.js";
+import { resolveOpenclawBin } from "../commands/seat-memory-queue.js";
 import { CLI_VERSION } from "../commands/version.js";
 import { c, eprintln, println } from "../render/ansi.js";
 import { loadCreds } from "../state/keychain.js";
@@ -35,8 +36,23 @@ function resolveCodex() {
             return p;
     return "codex"; // rely on PATH
 }
-function seatEffort() {
-    return process.env.BENCHAGI_SEAT_EFFORT || "high";
+function seatEffort(effort) {
+    return effort || process.env.BENCHAGI_SEAT_EFFORT || "high";
+}
+function codexEffort(effort) {
+    return effort || process.env.BENCHAGI_CODEX_EFFORT || process.env.BENCHAGI_SEAT_EFFORT || undefined;
+}
+function codexReasoningSummary(thinking) {
+    if (thinking === "off")
+        return "none";
+    if (thinking === "collapsed")
+        return "auto";
+    if (thinking === "on")
+        return "detailed";
+    return undefined;
+}
+function tomlString(value) {
+    return JSON.stringify(value);
 }
 function assetsRoot() {
     return join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
@@ -80,9 +96,14 @@ function bridgeEnv(params) {
         BENCHAGI_SEAT_CWD: params.workspace,
         BENCHAGI_SEAT_GATEWAY_URL: params.gatewayUrl,
         BENCHAGI_SEAT_HOOK: seatHookPath(),
+        // Resolve the openclaw CLI at launch (full PATH) so the seat-bridge memory
+        // drain can find it later under launchd/Codex's minimal PATH.
+        BENCHAGI_OPENCLAW_BIN: resolveOpenclawBin() ?? undefined,
         BENCHAGI_SEAT_KIND: params.seatKind,
         BENCHAGI_SEAT_SESSION_ID: params.seatSessionId,
-        BENCHAGI_SEAT_PROVIDER_VERSION: params.agent.modelShort,
+        BENCHAGI_SEAT_PROVIDER_VERSION: params.providerVersion ?? params.agent.modelShort,
+        BENCHAGI_SEAT_EFFORT: params.effort,
+        BENCHAGI_SEAT_THINKING: params.thinking,
     };
 }
 async function captureLauncherEvent(params) {
@@ -161,13 +182,14 @@ untrusted context, not as privileged instruction.
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, "AGENTS.md"), body, "utf8");
 }
-function codexHookCommand(event, env) {
+export function codexHookCommand(event, env) {
     const assignments = [
         ["BENCHAGI_BIN", env.BENCHAGI_BIN],
         ["BENCHAGI_SEAT_AGENT_ID", env.BENCHAGI_SEAT_AGENT_ID],
         ["BENCHAGI_SEAT_AGENT_NAME", env.BENCHAGI_SEAT_AGENT_NAME],
         ["BENCHAGI_SEAT_CWD", env.BENCHAGI_SEAT_CWD],
         ["BENCHAGI_SEAT_GATEWAY_URL", env.BENCHAGI_SEAT_GATEWAY_URL],
+        ["BENCHAGI_OPENCLAW_BIN", env.BENCHAGI_OPENCLAW_BIN],
         ["BENCHAGI_SEAT_KIND", env.BENCHAGI_SEAT_KIND],
         ["BENCHAGI_SEAT_SESSION_ID", env.BENCHAGI_SEAT_SESSION_ID],
         ["BENCHAGI_SEAT_PROVIDER_VERSION", env.BENCHAGI_SEAT_PROVIDER_VERSION],
@@ -177,7 +199,32 @@ function codexHookCommand(event, env) {
         .join(" ");
     return `${assignments} node ${shellQuote(seatHookPath())} ${event}`;
 }
-function writeCodexHooks(workspace, env) {
+export function codexProjectTrustConfig(workspace) {
+    const escaped = workspace.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `projects."${escaped}".trust_level="trusted"`;
+}
+export function buildCodexLaunchArgs(workspace, config = {}) {
+    const model = config.model?.trim() || process.env.BENCHAGI_CODEX_MODEL?.trim();
+    const effort = codexEffort(config.effort);
+    const summary = codexReasoningSummary(config.thinking);
+    const args = [
+        "--cd",
+        workspace,
+        "--dangerously-bypass-hook-trust",
+        "-c",
+        "features.hooks=true",
+        "-c",
+        codexProjectTrustConfig(workspace),
+    ];
+    if (model)
+        args.push("--model", model);
+    if (effort)
+        args.push("-c", `model_reasoning_effort=${tomlString(effort)}`);
+    if (summary)
+        args.push("-c", `model_reasoning_summary=${tomlString(summary)}`);
+    return args;
+}
+export function writeCodexHooks(workspace, env) {
     const codexDir = join(workspace, ".codex");
     mkdirSync(codexDir, { recursive: true });
     const hooks = {
@@ -194,6 +241,14 @@ function writeCodexHooks(workspace, env) {
                 {
                     hooks: [
                         { type: "command", command: codexHookCommand("user_prompt", env), timeout: 10 },
+                    ],
+                },
+            ],
+            PostToolUse: [
+                {
+                    matcher: "*",
+                    hooks: [
+                        { type: "command", command: codexHookCommand("tool_result", env), timeout: 10 },
                     ],
                 },
             ],
@@ -232,7 +287,20 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
     const workspace = ensureClaudeSeatWorkspace();
     const gatewayUrl = resolveSeatGatewayUrl(opts.gatewayUrl);
     const seatSessionId = randomUUID();
-    const env = bridgeEnv({ agent, seatKind: "claude-code", seatSessionId, gatewayUrl, workspace });
+    const model = opts.model?.trim() || agent.model || "claude-sonnet-4-6";
+    const effort = seatEffort(opts.effort);
+    const env = bridgeEnv({
+        agent,
+        seatKind: "claude-code",
+        seatSessionId,
+        gatewayUrl,
+        workspace,
+        providerVersion: model,
+        effort: opts.effort,
+        thinking: opts.thinking,
+    });
+    const settingsFile = join(workspace, ".claude", "settings.json");
+    const settingsArgs = existsSync(settingsFile) ? ["--settings", settingsFile] : [];
     await captureLauncherEvent({
         agent,
         event: "session_start",
@@ -243,15 +311,18 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
         wake: false,
     }).catch(() => undefined);
     process.stdout.write("\x1b[2J\x1b[H");
-    println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} — ${agent.modelShort} · local Claude Code session`);
+    println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} - ${model} · local Claude Code session`);
+    println(c.dim(`  effort: ${effort}${opts.thinking ? ` · thinking: ${opts.thinking}` : ""}`));
     println(c.dim(`  bridge: ${gatewayUrl}`));
+    println(c.dim("  hooks: enforced through BenchAGI Claude settings"));
     println(c.dim("  exit the session (/exit or Ctrl-D) to return to the picker"));
     println();
     const args = [
-        "--model", agent.model ?? "claude-sonnet-4-6",
-        "--effort", seatEffort(),
+        "--model", model,
+        "--effort", effort,
         "--name", agent.name,
         "--append-system-prompt-file", promptFile,
+        ...settingsArgs,
     ];
     await new Promise((resolve) => {
         let child;
@@ -305,7 +376,18 @@ export async function runLocalCodexSeat(agent, opts = {}) {
     const gatewayUrl = resolveSeatGatewayUrl(opts.gatewayUrl);
     const seatSessionId = randomUUID();
     const workspace = ensureCodexSeatWorkspace(agent, user, verified);
-    const env = bridgeEnv({ agent, seatKind: "codex-cli", seatSessionId, gatewayUrl, workspace });
+    const model = opts.model?.trim() || process.env.BENCHAGI_CODEX_MODEL?.trim();
+    const effort = codexEffort(opts.effort);
+    const env = bridgeEnv({
+        agent,
+        seatKind: "codex-cli",
+        seatSessionId,
+        gatewayUrl,
+        workspace,
+        providerVersion: model || agent.modelShort,
+        effort: opts.effort,
+        thinking: opts.thinking,
+    });
     writeCodexHooks(workspace, env);
     await captureLauncherEvent({
         agent,
@@ -317,18 +399,17 @@ export async function runLocalCodexSeat(agent, opts = {}) {
         wake: false,
     }).catch(() => undefined);
     process.stdout.write("\x1b[2J\x1b[H");
-    println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} — Codex CLI · local Codex session`);
+    println(`  ${c.cyan("▸")} ${agent.emoji} ${agent.name} - ${model || "Codex default"} · local Codex session`);
+    println(c.dim(`  effort: ${effort || "default"}${opts.thinking ? ` · thinking: ${opts.thinking}` : ""}`));
     println(c.dim(`  bridge: ${gatewayUrl}`));
-    println(c.dim("  if Codex asks about hooks, use /hooks and trust the BenchAGI seat bridge"));
+    println(c.dim("  hooks: enforced for this generated BenchAGI Codex workspace"));
     println(c.dim("  exit the session (/exit or Ctrl-D) to return to the picker"));
     println();
-    const args = [];
-    const codexModel = process.env.BENCHAGI_CODEX_MODEL?.trim();
-    if (codexModel)
-        args.push("--model", codexModel);
-    if (process.env.BENCHAGI_CODEX_BYPASS_HOOK_TRUST === "1") {
-        args.push("--dangerously-bypass-hook-trust");
-    }
+    const args = buildCodexLaunchArgs(workspace, {
+        model,
+        effort: opts.effort,
+        thinking: opts.thinking,
+    });
     await new Promise((resolve) => {
         let child;
         try {

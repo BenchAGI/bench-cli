@@ -43,7 +43,7 @@ export async function commandDoctor(opts = {}) {
             });
             println(ok(`gateway protocol v${policy.protocol} (server ${policy.serverVersion})`));
             record("gateway-handshake", "ok", `gateway protocol v${policy.protocol} (server ${policy.serverVersion})`);
-            const required = ["chat.send", "chat.history", "sessions.list", "local-seat.capture"];
+            const required = ["chat.send", "chat.history", "sessions.list"];
             const missing = required.filter((m) => !policy.methods.includes(m));
             if (missing.length > 0) {
                 println(bad(`missing methods: ${missing.join(", ")}`));
@@ -53,6 +53,19 @@ export async function commandDoctor(opts = {}) {
             else {
                 println(ok("required methods present"));
                 record("gateway-methods", "ok", "required methods present");
+            }
+            if (policy.methods.includes("local-seat.capture")) {
+                println(ok("local seat capture RPC present"));
+                record("local-seat-route", "ok", "local-seat.capture RPC present");
+            }
+            else if (policy.methods.includes("system-event")) {
+                println(warn("local-seat.capture missing; local seats will use system-event fallback"));
+                record("local-seat-route", "warn", "local-seat.capture missing; local seats will use system-event fallback");
+            }
+            else {
+                println(bad("missing local seat bridge route: local-seat.capture or system-event required"));
+                record("local-seat-route", "bad", "missing local seat bridge route: local-seat.capture or system-event required");
+                exitCode = 6;
             }
             const tools = policy.events.includes("session.tool") || policy.methods.length > 0;
             void tools;

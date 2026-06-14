@@ -13,6 +13,8 @@ import { loadAccount } from "./account.js";
 import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 import { runTui } from "../tui/app.js";
 import type { Liveness } from "../probe/capability.js";
+import type { ThinkingMode } from "../render/stream.js";
+import type { PickerEffort } from "./picker.js";
 
 export type AgentLite = { id: string; model?: string };
 
@@ -24,6 +26,7 @@ const SDIM = "\x1b[38;2;124;124;135m";
 const SRESET = "\x1b[0m";
 
 const MODEL_SHORT: Record<string, string> = {
+  "claude-fable-5": "Fable 5",
   "claude-opus-4-8": "Opus 4.8",
   "claude-opus-4-6": "Opus 4.6",
   "claude-sonnet-4-6": "Sonnet 4.6",
@@ -129,6 +132,9 @@ export interface CloudSeatOpts {
   liveness?: Liveness;
   full?: boolean;
   noThinking?: boolean;
+  thinking?: ThinkingMode;
+  effort?: PickerEffort;
+  model?: string;
   traceFramesPath?: string;
   message?: string;
   classic?: boolean; // force the readline REPL even on an interactive TTY
@@ -156,27 +162,34 @@ async function runTuiSeat(runner: ChatRunner, agent: AgentLite): Promise<void> {
 
 export async function runCloudSeat(agentId: string | null, opts: CloudSeatOpts = {}): Promise<void> {
   const agent = await locateAgent(agentId, opts.gatewayUrl);
+  const selectedAgent = { ...agent, model: opts.model?.trim() || agent.model };
+  const thinkingMode = opts.noThinking ? "off" : opts.thinking;
   const useTui = shouldUseTui(opts);
   const runner = new ChatRunner({
-    agentId: agent.id,
-    modelPrimary: agent.model,
+    agentId: selectedAgent.id,
+    modelPrimary: selectedAgent.model,
+    thinkingLevel: opts.effort,
     liveness: opts.liveness ?? "auto",
     showFullToolOutput: Boolean(opts.full),
-    showThinking: !opts.noThinking,
+    showThinking: thinkingMode !== "off",
     traceFramesPath: opts.traceFramesPath,
     tui: useTui,
-    assistantLabel: cap(agent.id), // "Aurelius>" instead of "agent>"
+    assistantLabel: cap(selectedAgent.id), // "Aurelius>" instead of "agent>"
     gatewayUrl: opts.gatewayUrl,
   });
+  if (opts.model?.trim()) {
+    await runner.setModel(opts.model.trim());
+  }
+  if (thinkingMode) runner.setThinking(thinkingMode);
   try {
     await runner.connect();
-    await recordRecent(agent.id);
+    await recordRecent(selectedAgent.id);
     if (opts.message && opts.message.length > 0) {
       await singleTurn(runner, opts.message);
     } else if (useTui) {
-      await runTuiSeat(runner, agent);
+      await runTuiSeat(runner, selectedAgent);
     } else {
-      await replLoop(runner, agent.id, agent.model);
+      await replLoop(runner, selectedAgent.id, selectedAgent.model);
     }
   } finally {
     await runner.close();

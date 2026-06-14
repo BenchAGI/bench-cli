@@ -4,6 +4,7 @@ import { ensureCursorRestoredOnExit, eprintln, println } from "./render/ansi.js"
 import { commandAgentsList, commandAgentsUse } from "./commands/agents.js";
 import { commandAuthLogin, commandAuthLogout, commandAuthStatus } from "./commands/auth.js";
 import { commandDoctor } from "./commands/doctor.js";
+import { commandInstallApp } from "./commands/install-app.js";
 import { commandSeatBridge } from "./commands/seat-bridge.js";
 import { commandVersion, CLI_VERSION } from "./commands/version.js";
 import { getProjectAgent, loadState } from "./state/state-file.js";
@@ -45,6 +46,10 @@ export async function run(argv: string[]): Promise<void> {
       await commandDoctor({ report: parsed.report, attachPath: parsed.attachPath });
       return;
 
+    case "install-app":
+      await commandInstallApp();
+      return;
+
     case "auth":
       await runAuth(parsed.positional);
       return;
@@ -54,7 +59,7 @@ export async function run(argv: string[]): Promise<void> {
       return;
 
     case "seat-bridge":
-      await commandSeatBridge(parsed.positional);
+      await commandSeatBridge(parsed.positional, parsed.agent);
       return;
 
     case "launch":
@@ -235,6 +240,7 @@ function parseArgs(argv: string[]): Argv {
         arg === "auth" ||
         arg === "agents" ||
         arg === "doctor" ||
+        arg === "install-app" ||
         arg === "seat-bridge" ||
         arg === "version" ||
         arg === "help"
@@ -267,6 +273,7 @@ Usage:
 
   benchagi doctor                  diagnostics (+ gateway log locations)
   benchagi doctor --report         file the diagnostics on the BenchAGI Forge
+  benchagi install-app             install/refresh the macOS Dock launcher app
   benchagi version                 print version
 
 Flags:
@@ -278,7 +285,7 @@ Flags:
   --report                 (doctor) file the checks as a Forge diagnostics ticket
   --attach <path>          (doctor --report) include a runbook file in the report
   --gateway <ws-url>       default tunnel/harness gateway for chat/Enter mode
-  --direct-gateway <ws-url> gateway used by launcher direct-harness mode (d)
+  --direct-gateway <ws-url> gateway used by launcher Direct mode
   --trace-frames <path>    append raw gateway WS frames as JSONL
   --help, --version
 `);

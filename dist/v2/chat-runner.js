@@ -583,6 +583,9 @@ export class ChatRunner {
             this.sessionKey = `agent:${this.opts.agentId}`;
         }
         await this.ensureVerboseEvents();
+        if (this.opts.thinkingLevel) {
+            await this.patchSession({ thinkingLevel: this.opts.thinkingLevel });
+        }
     }
     async ensureVerboseEvents() {
         if (!this.sessionKey || this.verbosePatchUnavailable)

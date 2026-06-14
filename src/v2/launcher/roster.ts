@@ -15,6 +15,7 @@ export interface LauncherAgent {
 }
 
 const MODEL_SHORT: Record<string, string> = {
+  "claude-fable-5": "Fable 5",
   "claude-opus-4-8": "Opus 4.8",
   "claude-opus-4-6": "Opus 4.6",
   "claude-sonnet-4-6": "Sonnet 4.6",

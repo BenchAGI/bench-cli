@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # make-dock-app.sh — build the clickable "BenchAGI" Dock app (the glyph). Clicking it
-# opens a terminal running `benchagi`: boot cinematic → agent selector → choose a
-# CLOUD seat (Enter) or a LOCAL Claude Code seat (l).
+# opens a terminal running `benchagi`: boot cinematic → agent selector → configure
+# Cloud, Direct, Claude, or Codex seat mode → launch.
 #
 # The app is SELF-CONTAINED (its launch command lives inside the bundle and resolves
 # `benchagi` on PATH at click time) so the same build works for: local install
@@ -9,6 +9,7 @@
 #
 # Idempotent + reversible:  rm -rf "$HOME/Applications/BenchAGI.app"
 # Env overrides: BENCHAGI_APP_DIR (default ~/Applications), BENCHAGI_ICON (default ../assets/benchagi-icon.png).
+# Set BENCHAGI_SKIP_DOCK_PIN=1 to build the app without pinning it to the Dock.
 set -euo pipefail
 
 if [ "$(uname -s 2>/dev/null)" != "Darwin" ]; then
@@ -28,8 +29,29 @@ tmp="$(mktemp -d)"
 cat > "$tmp/b.applescript" <<'OSA'
 on run
   set me_path to POSIX path of (path to me)
-  set cmd to me_path & "Contents/Resources/launch.command"
-  do shell script "/usr/bin/open -a Terminal " & quoted form of cmd
+  set cmd to quoted form of (me_path & "Contents/Resources/launch.command")
+  tell application "Terminal"
+    activate
+    set benchTab to do script cmd
+    try
+      set current settings of benchTab to settings set "Pro"
+    on error
+      try
+        set current settings of benchTab to settings set "Clear Dark"
+      on error
+        try
+          set current settings of benchTab to settings set "Silver Aerogel"
+        end try
+      end try
+    end try
+    try
+      set custom title of benchTab to "BenchAGI"
+    end try
+    try
+      set number of columns of front window to 120
+      set number of rows of front window to 34
+    end try
+  end tell
 end run
 OSA
 /usr/bin/osacompile -o "$APP" "$tmp/b.applescript"
@@ -72,5 +94,14 @@ set_plist CFBundleIdentifier com.benchagi.benchagi-launcher
 LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 [ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
 
+if [ "${BENCHAGI_SKIP_DOCK_PIN:-0}" != "1" ]; then
+  APP_URL="file://$APP/"
+  if ! /usr/bin/defaults read com.apple.dock persistent-apps 2>/dev/null | /usr/bin/grep -Fq "$APP_URL"; then
+    /usr/bin/defaults write com.apple.dock persistent-apps -array-add \
+      "{\"tile-data\"={\"file-data\"={\"_CFURLString\"=\"$APP_URL\"; \"_CFURLStringType\"=15;}; \"file-label\"=\"BenchAGI\";}; \"tile-type\"=\"file-tile\";}"
+    /usr/bin/killall Dock >/dev/null 2>&1 || true
+  fi
+fi
+
 echo "✓ BenchAGI.app → $APP"
-echo "  Drag it to your Dock. Click → boot → pick your agent → cloud or local seat."
+echo "  Click the Dock glyph → boot → pick your agent → cloud or local seat."

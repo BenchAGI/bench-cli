@@ -18,6 +18,7 @@ import { c, eprintln, println } from "./render/ansi.js";
 export type RunnerOptions = {
   agentId: string;
   modelPrimary?: string;
+  thinkingLevel?: string;
   liveness?: Liveness;
   showFullToolOutput?: boolean;
   showThinking?: boolean;
@@ -648,6 +649,9 @@ export class ChatRunner {
       this.sessionKey = `agent:${this.opts.agentId}`;
     }
     await this.ensureVerboseEvents();
+    if (this.opts.thinkingLevel) {
+      await this.patchSession({ thinkingLevel: this.opts.thinkingLevel });
+    }
   }
 
   private async ensureVerboseEvents(): Promise<void> {

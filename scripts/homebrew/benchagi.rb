@@ -52,4 +52,14 @@ class Benchagi < Formula
     assert_match "bench v",     shell_output("#{bin}/bench version")
     assert_match "benchagi 1.", shell_output("#{bin}/benchagi version")
   end
+
+  def caveats
+    <<~EOS
+      To install or refresh the macOS Dock launcher app:
+        benchagi install-app
+
+      The curl installer runs this automatically; Homebrew leaves Dock mutation
+      to the user because formula installs should not change your Dock.
+    EOS
+  end
 end

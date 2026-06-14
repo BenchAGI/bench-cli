@@ -6,6 +6,9 @@
   },
   "outputStyle": "BenchAGI",
   "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume", "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_start", "timeout": 10 } ] }
+    ],
     "Notification": [
       { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" hook-notification" } ] }
     ],
@@ -14,6 +17,9 @@
         { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" clear" },
         { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" user_prompt", "timeout": 10 }
       ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" tool_result", "timeout": 10 } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_stop", "timeout": 10 } ] }

@@ -1,6 +1,6 @@
-// app.tsx — the full-screen ink cloud-chat shell. A scrolling output pane (committed lines flow into
-// native scrollback via <Static>) + a live in-progress region (streamed assistant/thinking) + the
-// 🦅 working indicator + the pinned input row + the dense pinned status bar. Renderer output reaches
+// app.tsx — the full-screen ink cloud-chat shell. A bounded, in-app scrolling output pane + a live
+// in-progress region (streamed assistant/thinking) + the 🦅 working indicator + the pinned input row
+// + the dense pinned status bar. Renderer output reaches
 // the screen via the ansi log sink → LogStore (set up in runTui); ink owns stdout directly.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -18,6 +18,7 @@ import { Working } from "./working.js";
 import { Input, slashMenuRows } from "./input.js";
 import { initInput, type InputState } from "./input-model.js";
 import { Palette, PALETTE_ROWS } from "./palette.js";
+import { containsMouseEvent, installTuiScreenMode, mouseWheelDelta } from "./terminal-events.js";
 
 export type TuiProps = {
   runner: ChatRunner;
@@ -201,7 +202,7 @@ export function App(props: TuiProps): JSX.Element {
         break;
       }
       case "clear":
-        store.clear(); // remounts <Static> empty (generation bump)
+        store.clear();
         props.clearScreen?.(); // wipe the rendered frame too
         break;
       case "switch":
@@ -272,6 +273,7 @@ export function App(props: TuiProps): JSX.Element {
   const maxScroll = Math.max(0, items.length - budget);
   const sc = Math.min(scroll, maxScroll); // clamped so the viewport never goes blank
   const pageStep = Math.max(1, budget - 2);
+  const wheelStep = Math.max(1, Math.floor(pageStep / 4));
   const visible = visibleTail(items, width, budget, sc);
   // Code-block awareness across ALL items, then map onto the visible window (so a block scrolled
   // into the middle still renders as code). visStart = index of the first visible line.
@@ -282,6 +284,12 @@ export function App(props: TuiProps): JSX.Element {
   // PgUp/PgDn scroll the history. (App-level useInput coexists with the input editor's; neither
   // consumes the other's keys — PgUp/PgDn aren't printable and the editor ignores them.)
   useInput((input, key) => {
+    const wheel = mouseWheelDelta(input);
+    if (wheel !== 0) {
+      setScroll((s) => Math.max(0, Math.min(maxScroll, s + wheel * wheelStep)));
+      return;
+    }
+    if (containsMouseEvent(input)) return;
     if (key.ctrl && input === "k") {
       setPaletteOpen((o) => !o); // Ctrl+K toggles the command palette
       return;
@@ -395,6 +403,7 @@ export async function runTui(runner: ChatRunner, props: Omit<TuiProps, "store" |
   const store = new LogStore();
   store.pushLine(c.dim(`benchagi ${CLI_VERSION} · 🦅 type a message, /help for commands, /exit to quit`));
   setLogSink(store.write);
+  const restoreScreen = installTuiScreenMode();
   // Holder so /clear can reach ink's instance.clear() (the instance doesn't exist until render()).
   let clearScreen = (): void => {};
   try {
@@ -406,5 +415,6 @@ export async function runTui(runner: ChatRunner, props: Omit<TuiProps, "store" |
     await app.waitUntilExit();
   } finally {
     setLogSink(null);
+    restoreScreen();
   }
 }

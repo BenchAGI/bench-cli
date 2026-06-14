@@ -30,9 +30,10 @@ $ benchagi launch          # force the launcher
 $ benchagi --no-launch     # skip it; open the REPL with your last agent
 ```
 
-- **Picker:** ↑/↓ move · **Enter = tunnel** (Bench harness) · **`d` = direct
-  gateway** · **`l` = local Claude Code seat** · **`x` = local Codex CLI seat** ·
-  `q` quit. Exit a session to return to the picker.
+- **Picker:** a two-stage arrow-key setup flow. Pick an agent, then choose
+  environment (**Cloud** tunnel, **Direct** gateway, **Claude** local seat, or
+  **Codex** local seat), model, effort, thinking display, and **Launch**.
+  Exit a session to return to the picker.
 - **Login:** if you're not signed in, the launcher runs `benchagi auth login`
   (Firebase browser hand-off) first, so agents know who you are.
 - **Roster = entitlements:** the agents shown are exactly what you're provisioned
@@ -94,7 +95,8 @@ Background tasks
 ## Install (customer)
 
 The one-liner installs Node 20+ checks, OpenClaw verification, and the CLI
-itself. It is idempotent and safe to re-run.
+itself. On macOS it also installs `~/Applications/BenchAGI.app` and pins the
+BenchAGI glyph in the Dock. It is idempotent and safe to re-run.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BenchAGI/bench-cli/main/scripts/install.sh | sh
@@ -117,6 +119,13 @@ After install, run:
 ```bash
 benchagi doctor
 bench setup            # legacy readiness check (deprecated alias)
+```
+
+If the macOS app ever needs to be repaired or you installed through Homebrew,
+run:
+
+```bash
+benchagi install-app
 ```
 
 `benchagi doctor` is the canonical post-install check. It verifies the V2
@@ -146,6 +155,10 @@ The tap lives at <https://github.com/BenchAGI/homebrew-tap>. The canonical
 `benchagi` formula installs both binaries; `brew install BenchAGI/tap/bench`
 remains as a deprecated alias formula that installs the identical artifact. The
 formula stub for publishing it is in `scripts/homebrew/benchagi.rb`.
+
+Homebrew leaves Dock mutation to the user. Run `benchagi install-app` after
+`brew install` for the same macOS Dock launcher experience as the curl
+installer.
 
 ## Requirements
 
