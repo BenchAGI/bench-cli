@@ -89,12 +89,14 @@ fi
 ok "Node.js $NODE_VERSION is available"
 
 step 'Checking OpenClaw'
-if ! command -v openclaw >/dev/null 2>&1; then
+OPENCLAW_BIN=$(command -v openclaw 2>/dev/null || true)
+if [ -z "$OPENCLAW_BIN" ]; then
   warn 'OpenClaw not found — the CLI will install, but you need OpenClaw for the local seat:'
   warn '  npm install -g openclaw'
   OPENCLAW_MISSING=1
+else
+  ok "OpenClaw is available at $OPENCLAW_BIN"
 fi
-ok "OpenClaw is available at $(command -v openclaw)"
 
 step 'Selecting package manager'
 if command -v pnpm >/dev/null 2>&1; then
@@ -153,27 +155,10 @@ ok "bench (deprecated alias) is available at $(command -v bench)"
 
 if [ "$OS" = 'macos' ]; then
   step 'Installing the BenchAGI Dock app (the glyph)'
-  # Locate the installed package (npm global root, else follow the benchagi symlink).
-  PKG_DIR=''
-  if command -v npm >/dev/null 2>&1; then
-    cand="$(npm root -g 2>/dev/null)/@benchagi/cli"
-    [ -d "$cand" ] && PKG_DIR="$cand"
-  fi
-  if [ -z "$PKG_DIR" ]; then
-    bin="$(command -v benchagi 2>/dev/null || true)"
-    while [ -n "$bin" ] && [ -L "$bin" ]; do
-      tgt="$(readlink "$bin")"; case "$tgt" in /*) bin="$tgt";; *) bin="$(dirname "$bin")/$tgt";; esac
-    done
-    [ -n "$bin" ] && cand="$(cd "$(dirname "$bin")/.." 2>/dev/null && pwd || true)" && [ -d "$cand/scripts" ] && PKG_DIR="$cand"
-  fi
-  if [ -n "$PKG_DIR" ] && [ -f "$PKG_DIR/scripts/make-dock-app.sh" ]; then
-    if bash "$PKG_DIR/scripts/make-dock-app.sh"; then
-      ok 'BenchAGI.app installed in ~/Applications (drag it to your Dock)'
-    else
-      warn 'Could not create the Dock app — the `benchagi` command still works.'
-    fi
+  if benchagi install-app; then
+    ok 'BenchAGI.app installed in ~/Applications and pinned to the Dock'
   else
-    warn 'Dock-app helper not found in the installed package — skipped (benchagi works).'
+    warn 'Could not create the Dock app — the `benchagi` command still works.'
   fi
 fi
 
