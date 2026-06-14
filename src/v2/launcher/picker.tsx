@@ -6,9 +6,11 @@ import { Box, Text, render, useApp, useInput } from "ink";
 
 import type { ThinkingMode } from "../render/stream.js";
 import type { LauncherAgent } from "./roster.js";
+import { modelChoices as modelChoicesForEnv, type ModelEnv } from "./models.js";
+import { effortChoices, effortIndexFor, DEFAULT_EFFORT, type PickerEffort } from "./effort.js";
 
 export type PickerMode = "tunnel" | "direct" | "local-claude" | "local-codex" | "quit";
-export type PickerEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type { PickerEffort };
 
 export interface PickerChoice {
   mode: PickerMode;
@@ -33,37 +35,15 @@ type AgentChoice = number | "exit";
 type ConfigRow = "environment" | "model" | "effort" | "thinking" | "launch" | "back";
 
 const IR = "#ff2d55";
-const DIM = "#7c7c87";
+// Secondary text. Brightened from the old #7c7c87 (very low contrast on dark
+// terminals) for legibility; inactive option rows also drop dimColor (below).
+const DIM = "#b9bcc8";
 
 const MODES: ButtonChoice<PickerMode>[] = [
   { label: "Cloud", value: "tunnel" },
   { label: "Direct", value: "direct" },
   { label: "Claude", value: "local-claude" },
   { label: "Codex", value: "local-codex" },
-];
-
-const CLAUDE_MODELS: ButtonChoice[] = [
-  { label: "Default", value: undefined },
-  { label: "Fable 5", value: "claude-fable-5" },
-  { label: "Sonnet 4.6", value: "claude-sonnet-4-6" },
-  { label: "Opus 4.8", value: "claude-opus-4-8" },
-  { label: "Haiku 4.5", value: "claude-haiku-4-5" },
-];
-
-const CODEX_MODELS: ButtonChoice[] = [
-  { label: "Default", value: undefined },
-  { label: "GPT-5.5", value: "gpt-5.5" },
-  { label: "GPT-5.4", value: "gpt-5.4" },
-  { label: "Mini", value: "gpt-5.4-mini" },
-  { label: "Spark", value: "gpt-5.3-codex-spark" },
-];
-
-const EFFORTS: ButtonChoice<PickerEffort>[] = [
-  { label: "Low", value: "low" },
-  { label: "Medium", value: "medium" },
-  { label: "High", value: "high" },
-  { label: "XHigh", value: "xhigh" },
-  { label: "Ultra Code", value: "max" },
 ];
 
 const THINKING: ButtonChoice<ThinkingMode>[] = [
@@ -86,8 +66,12 @@ function clampIndex(index: number, length: number): number {
   return ((index % length) + length) % length;
 }
 
+function modelEnv(mode: PickerMode): ModelEnv {
+  return mode === "quit" ? "tunnel" : mode;
+}
+
 function modelChoices(mode: PickerMode): ButtonChoice[] {
-  return mode === "local-codex" ? CODEX_MODELS : CLAUDE_MODELS;
+  return modelChoicesForEnv(modelEnv(mode)).map((m) => ({ label: m.label, value: m.value }));
 }
 
 function optionRows<T extends string | number | undefined>(
@@ -98,7 +82,7 @@ function optionRows<T extends string | number | undefined>(
   return choices.map((choice, index) => {
     const active = index === selected;
     return (
-      <Text key={`${label}-${index}-${choice.label}`} color={active ? IR : undefined} bold={active} dimColor={!active}>
+      <Text key={`${label}-${index}-${choice.label}`} color={active ? IR : undefined} bold={active}>
         {`${active ? " > " : "   "}${choice.label}`}
       </Text>
     );
@@ -142,8 +126,8 @@ function Picker({
   const [configRowIndex, setConfigRowIndex] = useState(0);
   const [modeIndex, setModeIndex] = useState(0);
   const [modelIndex, setModelIndex] = useState(0);
-  const [effortIndex, setEffortIndex] = useState(
-    Math.max(0, EFFORTS.findIndex((choice) => choice.value === (opts.initialEffort ?? "high"))),
+  const [effortIndex, setEffortIndex] = useState(() =>
+    effortIndexFor(modelEnv(MODES[0]!.value), opts.initialEffort ?? DEFAULT_EFFORT),
   );
   const [thinkingIndex, setThinkingIndex] = useState(
     Math.max(0, THINKING.findIndex((choice) => choice.value === (opts.initialThinking ?? "on"))),
@@ -154,7 +138,8 @@ function Picker({
   const mode = MODES[clampIndex(modeIndex, MODES.length)]!.value;
   const models = modelChoices(mode);
   const modelChoice = models[clampIndex(modelIndex, models.length)]!;
-  const effort = EFFORTS[clampIndex(effortIndex, EFFORTS.length)]!;
+  const efforts = effortChoices(modelEnv(mode));
+  const effort = efforts[clampIndex(effortIndex, efforts.length)]!;
   const thinking = THINKING[clampIndex(thinkingIndex, THINKING.length)]!;
   const configRow = CONFIG_ROWS[clampIndex(configRowIndex, CONFIG_ROWS.length)]!.value;
 
@@ -178,12 +163,14 @@ function Picker({
 
   const changeConfigValue = (delta: number) => {
     if (configRow === "environment") {
+      const newMode = MODES[clampIndex(modeIndex + delta, MODES.length)]!.value;
       setModeIndex((i) => clampIndex(i + delta, MODES.length));
-      setModelIndex(0);
+      setModelIndex(0); // model lists differ per env; reset to "Default"
+      setEffortIndex(effortIndexFor(modelEnv(newMode), effort.value)); // preserve effort by value
     } else if (configRow === "model") {
       setModelIndex((i) => clampIndex(i + delta, models.length));
     } else if (configRow === "effort") {
-      setEffortIndex((i) => clampIndex(i + delta, EFFORTS.length));
+      setEffortIndex((i) => clampIndex(i + delta, efforts.length));
     } else if (configRow === "thinking") {
       setThinkingIndex((i) => clampIndex(i + delta, THINKING.length));
     }

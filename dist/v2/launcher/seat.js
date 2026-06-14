@@ -36,11 +36,35 @@ function resolveCodex() {
             return p;
     return "codex"; // rely on PATH
 }
+// Effort levels the `claude --effort` flag accepts. `ultracode` is NOT one of
+// them — it's set via the CLAUDE_CODE_EFFORT_LEVEL env (see runLocalClaudeSeat).
+const CLAUDE_FLAG_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+// `--effort` args for a level — empty for `ultracode` (which only the env var
+// carries) so the flag and env can never disagree.
+export function claudeEffortArgs(effort) {
+    return CLAUDE_FLAG_EFFORTS.has(effort) ? ["--effort", effort] : [];
+}
 function seatEffort(effort) {
-    return effort || process.env.BENCHAGI_SEAT_EFFORT || "high";
+    return effort || process.env.BENCHAGI_SEAT_EFFORT || "medium";
+}
+// Codex `model_reasoning_effort` accepts minimal|low|medium|high|xhigh. Map the
+// picker's broader set down so an effort carried over from another env can't be
+// rejected (cloud has "off"; local Claude has "max"/"ultracode").
+const CODEX_VALID_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+function clampCodexEffort(effort) {
+    if (!effort)
+        return undefined;
+    if (CODEX_VALID_EFFORTS.has(effort))
+        return effort;
+    if (effort === "off")
+        return "minimal";
+    if (effort === "max" || effort === "ultracode")
+        return "xhigh";
+    return undefined;
 }
 function codexEffort(effort) {
-    return effort || process.env.BENCHAGI_CODEX_EFFORT || process.env.BENCHAGI_SEAT_EFFORT || undefined;
+    const raw = effort || process.env.BENCHAGI_CODEX_EFFORT || process.env.BENCHAGI_SEAT_EFFORT || undefined;
+    return clampCodexEffort(raw);
 }
 function codexReasoningSummary(thinking) {
     if (thinking === "off")
@@ -287,7 +311,7 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
     const workspace = ensureClaudeSeatWorkspace();
     const gatewayUrl = resolveSeatGatewayUrl(opts.gatewayUrl);
     const seatSessionId = randomUUID();
-    const model = opts.model?.trim() || agent.model || "claude-sonnet-4-6";
+    const model = opts.model?.trim() || agent.model || "claude-opus-4-8";
     const effort = seatEffort(opts.effort);
     const env = bridgeEnv({
         agent,
@@ -317,9 +341,12 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
     println(c.dim("  hooks: enforced through BenchAGI Claude settings"));
     println(c.dim("  exit the session (/exit or Ctrl-D) to return to the picker"));
     println();
+    // `ultracode` isn't a valid --effort flag value; it rides CLAUDE_CODE_EFFORT_LEVEL
+    // in the spawn env below. Pass --effort only for the flag-supported levels so the
+    // two paths can never disagree.
     const args = [
         "--model", model,
-        "--effort", effort,
+        ...claudeEffortArgs(effort),
         "--name", agent.name,
         "--append-system-prompt-file", promptFile,
         ...settingsArgs,
@@ -339,6 +366,8 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
                     BENCH_AGENT_ROLE: agent.role ?? "",
                     BENCH_AGENT_EMOJI: agent.emoji,
                     CLAUDE_PROJECT_DIR: workspace,
+                    // The launch-time effort, incl. `ultracode` which the --effort flag rejects.
+                    CLAUDE_CODE_EFFORT_LEVEL: effort,
                 },
             });
         }
