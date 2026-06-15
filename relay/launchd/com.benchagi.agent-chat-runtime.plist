@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent for the agent-chat relay — local Firestore <-> OpenClaw bridge.
+
+  Install with (adjust the paths below to where you cloned this repo):
+    cp launchd/com.benchagi.agent-chat-runtime.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.benchagi.agent-chat-runtime.plist
+
+  Reload after .env edits with bootout + bootstrap (NOT kickstart — kickstart
+  does not reload the plist's environment block).
+
+  Every path here MUST be a stable, user-owned path under $HOME — NEVER under
+  /tmp (a /tmp path breaks on restart when the OS reaps it).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.benchagi.agent-chat-runtime</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/youruser/bench-cli/relay/.venv/bin/python</string>
+        <string>/Users/youruser/bench-cli/relay/runtime.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/youruser/bench-cli/relay</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!--
+          Production env values live in the on-disk .env (loaded by
+          python-dotenv at startup). The plist intentionally avoids
+          duplicating secrets — keep them in .env (file-permission 600).
+        -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/agent-chat-runtime.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/agent-chat-runtime.err</string>
+</dict>
+</plist>
