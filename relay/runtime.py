@@ -108,9 +108,19 @@ AGENT_LABEL = {
 # creates the link (create-if-not-exists, so re-mentions across turns never
 # duplicate or reset a posted link). The owner is configurable so a fork/test
 # repo can be matched; default mirrors notify_back_daemon's NOTIFY_BACK_PR_REPO.
-PR_LINK_REPO_OWNER = os.environ.get("NOTIFY_BACK_PR_REPO_OWNER", "BenchAGI")
+DEFAULT_NOTIFY_BACK_PR_REPO = (
+    os.environ.get("NOTIFY_BACK_PR_REPO", "BenchAGI/BenchAGI_Mono_Repo").strip()
+    or "BenchAGI/BenchAGI_Mono_Repo"
+)
+PR_LINK_REPO_OWNER = (
+    os.environ.get("NOTIFY_BACK_PR_REPO_OWNER")
+    or DEFAULT_NOTIFY_BACK_PR_REPO.split("/", 1)[0]
+    or "BenchAGI"
+).strip()
 PR_URL_RE = re.compile(
-    r"https?://github\.com/" + re.escape(PR_LINK_REPO_OWNER) + r"/[\w.-]+/pull/(\d+)",
+    r"https?://github\.com/"
+    + re.escape(PR_LINK_REPO_OWNER)
+    + r"/(?P<repo>[\w.-]+)/pull/(?P<number>\d+)",
     re.IGNORECASE,
 )
 
@@ -349,7 +359,13 @@ class RuntimeConfig:
                 )
             return value
 
-        gateway_url = os.getenv("GATEWAY_URL", "http://127.0.0.1:18789").rstrip("/")
+        def optional(name: str, default: str) -> str:
+            value = os.getenv(name)
+            if value is None or value.strip() == "":
+                return default
+            return value.strip()
+
+        gateway_url = optional("GATEWAY_URL", "http://127.0.0.1:18789").rstrip("/")
         sa_path = required("FIREBASE_SERVICE_ACCOUNT_PATH")
         if not Path(sa_path).is_file():
             raise SystemExit(
@@ -364,11 +380,11 @@ class RuntimeConfig:
             # The OpenClaw gateway on 18789 *does* require a token, so set
             # one here if your GATEWAY_URL points at 18789.
             gateway_token=_resolve_gateway_token(os.getenv("GATEWAY_TOKEN", "").strip()),
-            gateway_timeout_seconds=float(os.getenv("GATEWAY_TIMEOUT_SECONDS", "180")),
+            gateway_timeout_seconds=float(optional("GATEWAY_TIMEOUT_SECONDS", "180")),
             firebase_service_account_path=sa_path,
-            firebase_project_id=os.getenv("FIREBASE_PROJECT_ID", "benchagi-8ea90"),
-            max_concurrent_inbound=int(os.getenv("MAX_CONCURRENT_INBOUND", "3")),
-            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            firebase_project_id=optional("FIREBASE_PROJECT_ID", "benchagi-8ea90"),
+            max_concurrent_inbound=int(optional("MAX_CONCURRENT_INBOUND", "3")),
+            log_level=optional("LOG_LEVEL", "INFO"),
             # Default lowered 45→25 so a live machine emits ≥3 heartbeats
             # inside the 90s MACHINE_PRESENCE_STALE_SECONDS window — a single
             # dropped beat (GC pause, transient Firestore hiccup) can no longer
@@ -376,7 +392,7 @@ class RuntimeConfig:
             # takeover or reap. An explicit HEARTBEAT_INTERVAL_SECONDS in .env
             # still wins.
             heartbeat_interval_seconds=float(
-                os.getenv("HEARTBEAT_INTERVAL_SECONDS", "25")
+                optional("HEARTBEAT_INTERVAL_SECONDS", "25")
             ),
             # Customer-parity session capture (unified memory Plane A).
             # DEFAULT OFF — flipping it on writes per-instance digest docs to
@@ -1849,15 +1865,17 @@ class InboundProcessor:
         session_id: str,
         text: str,
     ) -> None:
-        """Scan a completed reply for BenchAGI PR URLs and, for each unique PR
-        number, create a 'pr' follow-up link doc that notify_back_daemon picks
-        up. The runtime ONLY writes the link — it never calls `gh` (the daemon
-        does the terminal-state check and posts the in-chat follow-up).
+        """Scan a completed reply for BenchAGI PR URLs and, for each unique
+        repo+PR number, create a 'pr' follow-up link doc that
+        notify_back_daemon picks up. The runtime ONLY writes the link — it never
+        calls `gh` (the daemon does the terminal-state check and posts the
+        in-chat follow-up).
 
         Path: instances/{instance_id}/sessionFollowups/{followupId}
 
-        followupId is DETERMINISTIC — pr_{sessionId}_{pr}, sanitized for a
-        Firestore id — and the write is create-if-not-exists, so:
+        followupId is DETERMINISTIC — legacy default-repo links keep
+        pr_{sessionId}_{pr}; other repos include owner/repo too. IDs are
+        sanitized for Firestore and the write is create-if-not-exists, so:
           • the same PR re-mentioned across later turns never duplicates, and
           • a link the daemon already flipped to 'posted'/'cancelled' is never
             reset back to 'pending'.
@@ -1868,21 +1886,53 @@ class InboundProcessor:
         try:
             if not text:
                 return
-            prs = sorted({m.group(1) for m in PR_URL_RE.finditer(text)}, key=int)
-            if not prs:
+            pr_links: dict[str, dict[str, str]] = {}
+            for match in PR_URL_RE.finditer(text):
+                repo = f"{PR_LINK_REPO_OWNER}/{match.group('repo')}"
+                number = match.group("number")
+                key = f"{repo.lower()}#{number}"
+                pr_links.setdefault(
+                    key,
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "url": match.group(0),
+                    },
+                )
+            if not pr_links:
                 return
             followups = (
                 self.db.collection("instances")
                 .document(instance_id)
                 .collection("sessionFollowups")
             )
-            for pr in prs:
+            default_repo_key = DEFAULT_NOTIFY_BACK_PR_REPO.lower()
+            ordered_links = sorted(
+                pr_links.values(), key=lambda link: (link["repo"].lower(), int(link["number"]))
+            )
+            for link in ordered_links:
+                pr = link["number"]
+                repo = link["repo"]
                 try:
-                    followup_id = _sanitize_firestore_id(f"pr_{session_id}_{pr}")
+                    # Preserve the legacy doc id for the default mono-repo while
+                    # including repo in all other ids to avoid cross-repo PR-number
+                    # collisions (for example BenchAGI/bench-cli#31 vs mono#31).
+                    followup_id = _sanitize_firestore_id(
+                        f"pr_{session_id}_{pr}"
+                        if repo.lower() == default_repo_key
+                        else f"pr_{session_id}_{repo}_{pr}"
+                    )
                     link_ref = followups.document(followup_id)
 
                     @firestore.transactional
-                    def _create_if_absent(tx, ref=link_ref, fid=followup_id, num=pr):
+                    def _create_if_absent(
+                        tx,
+                        ref=link_ref,
+                        fid=followup_id,
+                        num=pr,
+                        work_repo=repo,
+                        work_url=link["url"],
+                    ):
                         snap = ref.get(transaction=tx)
                         if snap.exists:
                             return False  # already linked — never reset
@@ -1896,6 +1946,8 @@ class InboundProcessor:
                                 "userId": user_id,
                                 "workType": "pr",
                                 "workRef": str(num),
+                                "workRepo": work_repo,
+                                "workUrl": work_url,
                                 "status": "pending",
                                 "createdAt": firestore.SERVER_TIMESTAMP,
                             },
@@ -1905,16 +1957,18 @@ class InboundProcessor:
                     created = _create_if_absent(self.db.transaction())
                     if created:
                         self.log.info(
-                            "pr notify-back link created session_id=%s pr=%s id=%s",
+                            "pr notify-back link created session_id=%s repo=%s pr=%s id=%s",
                             session_id,
+                            repo,
                             pr,
                             followup_id,
                         )
                 except Exception as exc:  # noqa: BLE001 — one bad PR must not block others
                     self.log.warning(
                         "create_pr_followup_link failed (non-fatal) "
-                        "session_id=%s pr=%s: %s",
+                        "session_id=%s repo=%s pr=%s: %s",
                         session_id,
+                        repo,
                         pr,
                         exc,
                     )

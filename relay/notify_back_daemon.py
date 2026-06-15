@@ -17,16 +17,55 @@ agent-chat-runtime .env (SA, INSTANCE_ID, project) and venv.
 import os
 import sys
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
+from typing import Optional
 
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.oauth2 import service_account
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.environ.get("NOTIFY_BACK_PR_REPO", "BenchAGI/BenchAGI_Mono_Repo")
+DEFAULT_PR_REPO = "BenchAGI/BenchAGI_Mono_Repo"
+REPO = os.environ.get("NOTIFY_BACK_PR_REPO", DEFAULT_PR_REPO).strip() or DEFAULT_PR_REPO
 FORGE_TERMINAL = {"done", "failed", "cancelled"}
+PR_URL_RE = re.compile(
+    r"https?://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)/pull/(?P<number>\d+)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_firestore_id(raw: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", raw)
+    if safe in ("", ".", ".."):
+        safe = "_" + safe
+    return safe[:1500]
+
+
+def _env_value(env: dict, name: str, default: Optional[str] = None) -> str:
+    value = env.get(name)
+    if value is None or str(value).strip() == "":
+        if default is not None:
+            return default
+        raise SystemExit(f"[notify-back] missing required env: {name} (see .env.example)")
+    return str(value).strip()
+
+
+def _repo_from_url(url: object) -> Optional[str]:
+    if not isinstance(url, str):
+        return None
+    match = PR_URL_RE.search(url)
+    if not match:
+        return None
+    return f"{match.group('owner')}/{match.group('repo')}"
+
+
+def _repo_for_link(link: dict) -> str:
+    repo = link.get("workRepo")
+    if isinstance(repo, str) and "/" in repo and repo.strip():
+        return repo.strip()
+    return _repo_from_url(link.get("workUrl")) or REPO
 
 
 def _parse_iso8601(s):
@@ -62,10 +101,11 @@ def load_env() -> dict:
     return env
 
 
-def gh_pr_state(workref: str):
+def gh_pr_state(workref: str, repo: Optional[str] = None):
+    target_repo = repo or REPO
     try:
         out = subprocess.run(
-            ["gh", "pr", "view", str(workref), "-R", REPO,
+            ["gh", "pr", "view", str(workref), "-R", target_repo,
              "--json", "state,title,url,mergedAt,closedAt"],
             capture_output=True, text=True, timeout=25,
         )
@@ -105,7 +145,8 @@ def followup_decision(link: dict, db):
             return ("post", f"⚠️ Forge session “{name}” failed.")
         return ("post", f"🛑 Forge session “{name}” was cancelled.")
     if wt == "pr":
-        pr = gh_pr_state(ref)
+        repo = _repo_for_link(link)
+        pr = gh_pr_state(ref, repo)
         if not pr:
             return (None, None)
         state = pr.get("state")
@@ -113,10 +154,10 @@ def followup_decision(link: dict, db):
         url = pr.get("url") or ""
         if state == "MERGED":
             terminal_at = _parse_iso8601(pr.get("mergedAt"))
-            text = f"✅ PR #{ref} merged — {title}\n{url}"
+            text = f"✅ PR {repo}#{ref} merged — {title}\n{url}"
         elif state == "CLOSED":
             terminal_at = _parse_iso8601(pr.get("closedAt"))
-            text = f"PR #{ref} closed (not merged) — {title}\n{url}"
+            text = f"PR {repo}#{ref} closed (not merged) — {title}\n{url}"
         else:
             return (None, None)  # still OPEN — wait
 
@@ -141,7 +182,12 @@ def post_followup(db, link: dict, text: str) -> str:
     instance_id = link["instanceId"]
     session_id = link["sessionId"]
     work_ref = str(link["workRef"])
-    message_id = ("followup_" + work_ref)[:1500]
+    work_key = (
+        f"{_repo_for_link(link)}#{work_ref}"
+        if link.get("workType") == "pr"
+        else work_ref
+    )
+    message_id = _sanitize_firestore_id("followup_" + work_key)
     session_ref = db.document(f"instances/{instance_id}/agentChatSessions/{session_id}")
     message_ref = db.document(
         f"instances/{instance_id}/agentChatSessions/{session_id}/messages/{message_id}"
@@ -151,6 +197,8 @@ def post_followup(db, link: dict, text: str) -> str:
     @firestore.transactional
     def _txn(tx):
         snap = session_ref.get(transaction=tx)
+        message_snap = message_ref.get(transaction=tx)
+        message_exists = message_snap.exists
         if not snap.exists:
             tx.set(session_ref, {
                 "sessionId": session_id,
@@ -161,12 +209,12 @@ def post_followup(db, link: dict, text: str) -> str:
                 "status": "active",
                 "startedAt": firestore.SERVER_TIMESTAMP,
                 "lastMessageAt": firestore.SERVER_TIMESTAMP,
-                "messageCount": 1,
+                "messageCount": 0 if message_exists else 1,
                 "modality": "text",
                 "preview": None,
                 "label": None,
             })
-        else:
+        elif not message_exists:
             tx.update(session_ref, {
                 "messageCount": firestore.Increment(1),
                 "lastMessageAt": firestore.SERVER_TIMESTAMP,
@@ -185,14 +233,18 @@ def post_followup(db, link: dict, text: str) -> str:
 
 
 def main() -> int:
+    global REPO
     env = load_env()
+    REPO = _env_value(env, "NOTIFY_BACK_PR_REPO", REPO)
+    service_account_path = _env_value(env, "FIREBASE_SERVICE_ACCOUNT_PATH")
+    project_id = _env_value(env, "FIREBASE_PROJECT_ID", "benchagi-8ea90")
+    instance_id = _env_value(env, "INSTANCE_ID")
     db = firestore.Client(
-        project=env["FIREBASE_PROJECT_ID"],
+        project=project_id,
         credentials=service_account.Credentials.from_service_account_file(
-            os.path.expanduser(env["FIREBASE_SERVICE_ACCOUNT_PATH"])
+            os.path.expanduser(service_account_path)
         ),
     )
-    instance_id = env["INSTANCE_ID"]
     links = (
         db.collection(f"instances/{instance_id}/sessionFollowups")
         .where(filter=FieldFilter("status", "==", "pending"))
