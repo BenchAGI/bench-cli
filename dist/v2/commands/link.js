@@ -22,6 +22,10 @@ import { CLI_VERSION } from "./version.js";
 const AURELIUS_DIR = join(homedir(), ".aurelius");
 const MACHINE_PATH = join(AURELIUS_DIR, "machine.json");
 const BRIDGE_PATH = join(AURELIUS_DIR, "bridge.json");
+async function ensureAureliusDir() {
+    await mkdir(AURELIUS_DIR, { recursive: true, mode: 0o700 });
+    await chmod(AURELIUS_DIR, 0o700).catch(() => { });
+}
 function sanitizeMachineId(raw) {
     const cleaned = raw
         .replace(/[^A-Za-z0-9._:-]/g, "-")
@@ -52,10 +56,11 @@ async function resolveMachineIdentity() {
     }
     const machineId = sanitizeMachineId(`mac-${hostname()}-${randomUUID().slice(0, 8)}`);
     const machineFingerprint = randomUUID();
-    await mkdir(AURELIUS_DIR, { recursive: true });
+    await ensureAureliusDir();
     await writeFile(MACHINE_PATH, JSON.stringify({ machineId, machineFingerprint }, null, 2), {
         mode: 0o600,
     });
+    await chmod(MACHINE_PATH, 0o600).catch(() => { });
     return { machineId, machineFingerprint };
 }
 async function postJson(url, body, headers = {}) {
@@ -82,10 +87,28 @@ async function postJson(url, body, headers = {}) {
     return json;
 }
 async function saveBridgeCreds(data) {
-    await mkdir(AURELIUS_DIR, { recursive: true });
+    await ensureAureliusDir();
     await writeFile(BRIDGE_PATH, JSON.stringify({ ...data, savedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
     await chmod(BRIDGE_PATH, 0o600).catch(() => { });
     return BRIDGE_PATH;
+}
+function readRequiredString(value, field) {
+    if (!value || typeof value !== "object") {
+        throw Object.assign(new Error("Pairing service returned an invalid response."), { exitCode: 1 });
+    }
+    const raw = value[field];
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+        throw Object.assign(new Error(`Pairing service response missing ${field}.`), { exitCode: 1 });
+    }
+    return raw;
+}
+function parsePairingResult(value) {
+    return {
+        tenantId: readRequiredString(value, "tenantId"),
+        machineId: readRequiredString(value, "machineId"),
+        token: readRequiredString(value, "token"),
+        expiresAt: readRequiredString(value, "expiresAt"),
+    };
 }
 async function fetchBridgeState(apiBase, token, instanceId) {
     try {
@@ -118,7 +141,7 @@ export async function commandLink(args, opts = {}) {
     let result;
     if (codeArg) {
         // Fallback path: explicit 8-digit code (fresh Mac / not signed in).
-        result = (await postJson(`${apiBase}/v1/aurelius/bridge/pairing/complete`, {
+        result = parsePairingResult(await postJson(`${apiBase}/v1/aurelius/bridge/pairing/complete`, {
             code: codeArg,
             ...meta,
         }));
@@ -142,7 +165,7 @@ export async function commandLink(args, opts = {}) {
             eprintln("Could not obtain a Bench sign-in. Use `bench link <8-digit-code>` instead.");
             return 1;
         }
-        result = (await postJson(`${apiBase}/v1/aurelius/bridge/pairing/self`, { ...meta, ...(account?.instanceId ? { instanceId: account.instanceId } : {}) }, { Authorization: `Bearer ${firebaseToken}` }));
+        result = parsePairingResult(await postJson(`${apiBase}/v1/aurelius/bridge/pairing/self`, { ...meta, ...(account?.instanceId ? { instanceId: account.instanceId } : {}) }, { Authorization: `Bearer ${firebaseToken}` }));
     }
     const savedTo = await saveBridgeCreds({ ...result, apiBase });
     println(c.green("✔ This Mac is paired to your Bench workspace."));
