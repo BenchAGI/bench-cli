@@ -12,6 +12,8 @@ _bench() {
     'status:Gateway / channel / agent health'
     'tail:Live-tail the gateway log stream'
     'commitments:Inferred follow-up commitments'
+    'link:Pair this Mac to your Aurelius'
+    'relink:Re-pair after the bridge drops'
     'setup:Run readiness checks'
     'version:Print version'
     'help:Show help'
