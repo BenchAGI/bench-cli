@@ -92,7 +92,7 @@ async function loginFlowAttempt(opts = {}) {
                 return;
             resolved = true;
             server.close();
-            reject(new Error(`auth login timed out after ${timeoutMs}ms`));
+            reject(new Error(`auth login timed out after ${timeoutMs}ms. If your browser isn't on this machine, the loopback handoff can't complete — re-run \`benchagi auth login --paste\` and paste the sign-in bundle the auth page shows.`));
         }, timeoutMs);
         server.on("close", () => clearTimeout(timer));
         server.listen(port, "127.0.0.1", () => {
@@ -110,6 +110,56 @@ async function loginFlowAttempt(opts = {}) {
             reject(err);
         });
     });
+}
+/**
+ * Validate + normalize a sign-in bundle (the JSON the auth page produces).
+ * Shared by the loopback callback (`handle`) and the `--paste` escape hatch so
+ * both enforce the exact same shape — idToken, refreshToken, uid, email,
+ * expiresAt. Returns a tagged result rather than throwing so each caller can
+ * shape its own response.
+ */
+export function parseFirebaseCredsBundle(raw) {
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch {
+        return { kind: "err", error: "invalid JSON" };
+    }
+    if (typeof parsed.idToken !== "string" ||
+        typeof parsed.refreshToken !== "string" ||
+        typeof parsed.uid !== "string" ||
+        typeof parsed.email !== "string" ||
+        typeof parsed.expiresAt !== "number") {
+        return { kind: "err", error: "missing fields" };
+    }
+    return {
+        kind: "ok",
+        creds: {
+            idToken: parsed.idToken,
+            refreshToken: parsed.refreshToken,
+            uid: parsed.uid,
+            email: parsed.email,
+            expiresAt: parsed.expiresAt,
+        },
+    };
+}
+/**
+ * `--paste` escape hatch: persist a sign-in bundle obtained out-of-band
+ * (the auth page's manual copy box) instead of via the loopback listener.
+ * This is the durable fallback for the case where the browser is NOT on the
+ * same machine as the CLI — the loopback handoff POSTs to 127.0.0.1:<port>,
+ * which only the local browser can reach, so a remote/screen-shared browser
+ * fails with "couldn't reach the CLI listener". Reuses the same validation and
+ * `saveCreds` persistence as the loopback path, so refresh tokens are retained.
+ */
+export async function loginWithPastedCredsBundle(raw) {
+    const result = parseFirebaseCredsBundle(raw.trim());
+    if (result.kind === "err") {
+        throw new Error(`Pasted sign-in bundle is invalid (${result.error}). Paste the full JSON the auth page shows (idToken, refreshToken, uid, email, expiresAt).`);
+    }
+    await saveCreds(result.creds);
+    return { email: result.creds.email, uid: result.creds.uid };
 }
 /**
  * The HTTP request handler for the cli-callback listener. Exported so
@@ -181,24 +231,11 @@ export async function handle(req, res, expectedState, done) {
             return;
         }
     }
-    let parsed;
-    try {
-        parsed = JSON.parse(body);
-    }
-    catch {
+    const result = parseFirebaseCredsBundle(body);
+    if (result.kind === "err") {
         res.writeHead(400, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN });
-        res.end("invalid JSON");
-        done({ kind: "err", error: "invalid JSON" });
-        return;
-    }
-    if (typeof parsed.idToken !== "string" ||
-        typeof parsed.refreshToken !== "string" ||
-        typeof parsed.uid !== "string" ||
-        typeof parsed.email !== "string" ||
-        typeof parsed.expiresAt !== "number") {
-        res.writeHead(400, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN });
-        res.end("missing fields");
-        done({ kind: "err", error: "missing fields" });
+        res.end(result.error); // "invalid JSON" | "missing fields"
+        done(result);
         return;
     }
     res.writeHead(200, {
@@ -206,16 +243,7 @@ export async function handle(req, res, expectedState, done) {
         "Content-Type": "application/json",
     });
     res.end(JSON.stringify({ ok: true }));
-    done({
-        kind: "ok",
-        creds: {
-            idToken: parsed.idToken,
-            refreshToken: parsed.refreshToken,
-            uid: parsed.uid,
-            email: parsed.email,
-            expiresAt: parsed.expiresAt,
-        },
-    });
+    done(result);
 }
 async function defaultOpenBrowser(url) {
     const cmd = process.platform === "darwin" ? "open" :
