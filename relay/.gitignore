@@ -1,0 +1,14 @@
+# Local secrets — never check in
+.env
+.env.local
+.env.*.local
+*.bak
+*.bak-*
+
+# Python virtualenv
+.venv/
+__pycache__/
+*.pyc
+
+# macOS noise
+.DS_Store

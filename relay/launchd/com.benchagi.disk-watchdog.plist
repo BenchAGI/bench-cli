@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.benchagi.disk-watchdog — alert when the volume holding ~/.openclaw runs low.
+  Install with (adjust the paths below to where you cloned this repo):
+    cp com.benchagi.disk-watchdog.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.benchagi.disk-watchdog.plist
+  Every path here is a stable, user-owned path under $HOME — NEVER under /tmp.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.benchagi.disk-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/youruser/.openclaw/bin/disk-watchdog.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/youruser</string>
+        <key>DISK_WATCH_PATH</key>
+        <string>/Users/youruser/.openclaw</string>
+        <key>DISK_WATCH_THRESHOLD_GIB</key>
+        <string>10</string>
+        <!-- Slack channel id to alert into (optional; omit to disable alerts). -->
+        <key>DISK_WATCH_CHANNEL</key>
+        <string>YOUR_SLACK_CHANNEL_ID</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/disk-watchdog.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/disk-watchdog.err.log</string>
+</dict>
+</plist>
