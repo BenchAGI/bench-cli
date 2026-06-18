@@ -4,7 +4,7 @@ _bench() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="ask chat feed agents sessions tasks status tail commitments setup version help"
+  cmds="ask chat feed agents sessions tasks status tail commitments link relink setup version help"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )

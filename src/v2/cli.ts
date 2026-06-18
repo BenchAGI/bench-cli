@@ -3,6 +3,7 @@
 import { ensureCursorRestoredOnExit, eprintln, println } from "./render/ansi.js";
 import { commandAgentsList, commandAgentsUse } from "./commands/agents.js";
 import { commandAuthLogin, commandAuthLogout, commandAuthStatus } from "./commands/auth.js";
+import { commandLink } from "./commands/link.js";
 import { commandDoctor } from "./commands/doctor.js";
 import { commandInstallApp } from "./commands/install-app.js";
 import { commandSeatBridge } from "./commands/seat-bridge.js";
@@ -71,6 +72,13 @@ export async function run(argv: string[]): Promise<void> {
         directGatewayUrl: parsed.directGatewayUrl ?? process.env.BENCHAGI_DIRECT_GATEWAY_URL,
         gatewayUrl: parsed.gatewayUrl ?? process.env.BENCHAGI_GATEWAY_URL,
         traceFramesPath: parsed.traceFramesPath,
+      });
+      return;
+
+    case "link":
+    case "relink":
+      process.exitCode = await commandLink(parsed.positional, {
+        relink: parsed.command === "relink",
       });
       return;
 
@@ -238,6 +246,8 @@ function parseArgs(argv: string[]): Argv {
       if (
         arg === "launch" ||
         arg === "auth" ||
+        arg === "link" ||
+        arg === "relink" ||
         arg === "agents" ||
         arg === "doctor" ||
         arg === "install-app" ||
@@ -267,6 +277,10 @@ Usage:
   benchagi auth login              Firebase Direct browser-handoff (optional in V1)
   benchagi auth logout             clear keychain
   benchagi auth status             show signed-in identity
+
+  benchagi link                    pair this Mac to your Aurelius (zero-touch)
+  benchagi link <8-digit-code>     pair using a code (fresh Mac / not signed in)
+  benchagi relink                  re-pair after the bridge drops
 
   benchagi agents list             list configured agents
   benchagi agents use <name>       set default agent

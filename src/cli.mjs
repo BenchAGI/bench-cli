@@ -45,6 +45,11 @@ Inspect commands:
   status                Gateway / channel / agent health
   tail                  Live-tail the gateway log stream
 
+Connect:
+  link                  Pair this Mac to your Aurelius (zero-touch re-link)
+  link <8-digit-code>   Pair using a code (fresh Mac / not signed in yet)
+  relink                Re-pair after the bridge drops
+
 Lifecycle:
   setup                 Run readiness checks (great for first-time installs)
   version               Print version
@@ -83,6 +88,16 @@ export async function run(argv) {
     return 0;
   }
   const [name, ...rest] = argv;
+
+  // `bench link` / `bench relink` — delegate to the v2 CLI, which owns the
+  // auth + device-identity machinery. Keeps `bench` the single front door the
+  // offline banner and runbooks point at.
+  if (name === "link" || name === "relink") {
+    const { run: runV2 } = await import("../dist/v2/cli.js");
+    await runV2([name, ...rest]);
+    process.exit(process.exitCode ?? 0);
+  }
+
   const handler = COMMANDS[name];
   if (!handler) {
     process.stderr.write(`bench: unknown command "${name}"\n\n${TOP_HELP}`);
