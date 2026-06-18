@@ -121,7 +121,7 @@ async function runAuth(args: string[]): Promise<void> {
   const sub = args[0];
   switch (sub) {
     case "login":
-      await commandAuthLogin();
+      await commandAuthLogin({ paste: args.includes("--paste") });
       return;
     case "logout":
       await commandAuthLogout();
@@ -275,6 +275,7 @@ Usage:
   benchagi --agent <name> <msg>    address a specific agent
 
   benchagi auth login              Firebase Direct browser-handoff (optional in V1)
+  benchagi auth login --paste      paste a sign-in bundle (browser not on this machine)
   benchagi auth logout             clear keychain
   benchagi auth status             show signed-in identity
 
