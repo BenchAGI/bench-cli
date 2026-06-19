@@ -1,36 +1,17 @@
 // Tests for how the local seats translate the picker effort into launch flags.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
-import { claudeEffortArgs, buildCodexLaunchArgs, writeClaudeLaunchSettings } from "../launcher/seat.js";
+import { claudeEffortArgs, buildCodexLaunchArgs } from "../launcher/seat.js";
 test("claude --effort flag carries the 5 flag-supported levels", () => {
     assert.deepEqual(claudeEffortArgs("low"), ["--effort", "low"]);
     assert.deepEqual(claudeEffortArgs("medium"), ["--effort", "medium"]);
     assert.deepEqual(claudeEffortArgs("max"), ["--effort", "max"]);
     assert.deepEqual(claudeEffortArgs("xhigh"), ["--effort", "xhigh"]);
 });
-test("claude ultracode maps to xhigh effort plus session settings", () => {
-    // The flag rejects literal "ultracode"; Claude Code enables it through
-    // --settings while the effort flag carries the underlying xhigh level.
-    assert.deepEqual(claudeEffortArgs("ultracode"), ["--effort", "xhigh"]);
-    const dir = mkdtempSync(join(tmpdir(), "benchagi-claude-settings-"));
-    const baseSettings = join(dir, "settings.json");
-    writeFileSync(baseSettings, JSON.stringify({
-        outputStyle: "BenchAGI",
-        hooks: { Stop: [] },
-    }), "utf8");
-    const launchSettings = writeClaudeLaunchSettings(baseSettings, "ultracode", "seat-1", dir);
-    assert.ok(launchSettings);
-    assert.notEqual(launchSettings, baseSettings);
-    const merged = JSON.parse(readFileSync(launchSettings, "utf8"));
-    assert.equal(merged.outputStyle, "BenchAGI");
-    assert.deepEqual(merged.hooks, { Stop: [] });
-    assert.equal(merged.ultracode, true);
-});
-test("claude non-ultracode launches reuse the normal settings file", () => {
-    assert.equal(writeClaudeLaunchSettings("/tmp/settings.json", "xhigh", "seat-1"), "/tmp/settings.json");
+test("claude ultracode is NOT passed as --effort (rides CLAUDE_CODE_EFFORT_LEVEL)", () => {
+    // The flag rejects ultracode; passing it here would error. The seat sets the env
+    // var instead, so the flag list must be empty.
+    assert.deepEqual(claudeEffortArgs("ultracode"), []);
 });
 function codexEffortArg(effort) {
     const args = buildCodexLaunchArgs("/tmp/codex-ws", { effort: effort });

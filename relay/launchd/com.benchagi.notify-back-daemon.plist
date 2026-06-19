@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent for the in-app notify-back daemon. Runs once per StartInterval,
+  watches the relay's sessionFollowups link docs to a terminal state, and posts
+  an in-chat "done" follow-up. Reuses the relay's .env + venv.
+
+  Install with (adjust the paths below to where you cloned this repo):
+    cp launchd/com.benchagi.notify-back-daemon.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.benchagi.notify-back-daemon.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.benchagi.notify-back-daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/youruser/bench-cli/relay/.venv/bin/python3</string>
+        <string>/Users/youruser/bench-cli/relay/notify_back_daemon.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/youruser/bench-cli/relay</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/Users/youruser/.local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/notify-back-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/notify-back-daemon.log</string>
+</dict>
+</plist>

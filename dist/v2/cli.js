@@ -2,6 +2,7 @@
 import { ensureCursorRestoredOnExit, eprintln, println } from "./render/ansi.js";
 import { commandAgentsList, commandAgentsUse } from "./commands/agents.js";
 import { commandAuthLogin, commandAuthLogout, commandAuthStatus } from "./commands/auth.js";
+import { commandLink } from "./commands/link.js";
 import { commandDoctor } from "./commands/doctor.js";
 import { commandInstallApp } from "./commands/install-app.js";
 import { commandSeatBridge } from "./commands/seat-bridge.js";
@@ -47,6 +48,12 @@ export async function run(argv) {
                 traceFramesPath: parsed.traceFramesPath,
             });
             return;
+        case "link":
+        case "relink":
+            process.exitCode = await commandLink(parsed.positional, {
+                relink: parsed.command === "relink",
+            });
+            return;
         default: {
             // Bare TTY with no message → the BenchAGI launcher (boot + agent picker).
             const wantsLauncher = parsed.command == null &&
@@ -84,7 +91,7 @@ async function runAuth(args) {
     const sub = args[0];
     switch (sub) {
         case "login":
-            await commandAuthLogin();
+            await commandAuthLogin({ paste: args.includes("--paste") });
             return;
         case "logout":
             await commandAuthLogout();
@@ -208,6 +215,8 @@ function parseArgs(argv) {
             // First non-flag positional is the command.
             if (arg === "launch" ||
                 arg === "auth" ||
+                arg === "link" ||
+                arg === "relink" ||
                 arg === "agents" ||
                 arg === "doctor" ||
                 arg === "install-app" ||
@@ -233,8 +242,13 @@ Usage:
   benchagi --agent <name> <msg>    address a specific agent
 
   benchagi auth login              Firebase Direct browser-handoff (optional in V1)
+  benchagi auth login --paste      paste a sign-in bundle (browser not on this machine)
   benchagi auth logout             clear keychain
   benchagi auth status             show signed-in identity
+
+  benchagi link                    pair this Mac to your Aurelius (zero-touch)
+  benchagi link <8-digit-code>     pair using a code (fresh Mac / not signed in)
+  benchagi relink                  re-pair after the bridge drops
 
   benchagi agents list             list configured agents
   benchagi agents use <name>       set default agent

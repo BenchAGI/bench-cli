@@ -5,6 +5,8 @@ import { test } from "node:test";
 import {
   effortChoices,
   effortIndexFor,
+  effortValueForEnv,
+  nextEffortValueForEnv,
   DEFAULT_EFFORT,
   ALL_EFFORTS,
 } from "../launcher/effort.js";
@@ -47,6 +49,16 @@ test("effortIndexFor preserves the level across envs, else falls back to medium"
   assert.equal(effortChoices("local-codex")[effortIndexFor("local-codex", "ultracode")]!.value, "medium");
   // off -> not in codex -> medium
   assert.equal(effortChoices("local-codex")[effortIndexFor("local-codex", "off")]!.value, "medium");
+});
+
+test("unsupported saved efforts remain recoverable when switching to a supporting env", () => {
+  assert.equal(effortValueForEnv("tunnel", "ultracode"), "medium");
+  assert.equal(effortValueForEnv("local-claude", "ultracode"), "ultracode");
+});
+
+test("effort changes advance from the displayed fallback without mutating env-specific values early", () => {
+  assert.equal(nextEffortValueForEnv("tunnel", "ultracode", 1), "high");
+  assert.equal(nextEffortValueForEnv("local-claude", "ultracode", -1), "max");
 });
 
 test("ALL_EFFORTS covers every value used across environments", () => {

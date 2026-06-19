@@ -206,6 +206,9 @@ landing per the roadmap. Until then, invoke them via `bench <verb>`.
 | `bench sessions [agent]` | Recent conversation sessions |
 | `bench tasks` | Background tasks (subagent / acp / cron / cli) |
 | `bench status` | Gateway + channel + agent health |
+| `bench link` | Pair this Mac to your Aurelius with the signed-in Bench identity |
+| `bench link <8-digit-code>` | Pair this Mac from a fresh/not-yet-signed-in install |
+| `bench relink` | Re-pair this Mac after the Aurelius bridge drops |
 | `bench setup` | Readiness checks for first-time installs |
 | `bench version` | Print version |
 
@@ -268,8 +271,11 @@ echo 'fpath=(~/.zsh/completions $fpath); autoload -U compinit; compinit' >> ~/.z
 | `BENCH_OPENCLAW_BIN` | Path to the `openclaw` binary | `openclaw` |
 | `NO_COLOR` | Disable ANSI colors | unset |
 
-The CLI does not write to disk and does not read or print secrets. It only
-shells out to the local `openclaw` binary, which owns auth + gateway state.
+The legacy OpenClaw verbs shell out to the local `openclaw` binary, which owns
+gateway state. `bench link`/`bench relink` call Bench cloud pairing endpoints
+and write the Aurelius bridge credential under
+`~/.openclaw/agents/aurelius-<principal>/bridge-credential.json` with private
+file permissions. The CLI does not print stored tokens.
 
 ## Design notes
 

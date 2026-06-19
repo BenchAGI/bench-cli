@@ -1,7 +1,7 @@
 // effort.ts — the effort taxonomy, kept pure (no React) so it's unit-testable and
 // shared. Effort is environment-specific:
 //   • local Claude Code has the `ultracode` preset (xhigh + dynamic-workflow
-//     orchestration), set via session `--settings`, not as a literal --effort value.
+//     orchestration), set via the CLAUDE_CODE_EFFORT_LEVEL env — NOT a --effort flag.
 //   • the OpenClaw cloud harness exposes off…max thinkingLevels (no ultracode).
 //   • Codex reasoning effort is minimal…high.
 // Conflating these is the bug behind "Ultra Code runs max thinking".
@@ -49,6 +49,16 @@ export function effortIndexFor(env, value) {
         return exact;
     const fallback = list.findIndex((c) => c.value === DEFAULT_EFFORT);
     return fallback >= 0 ? fallback : 0;
+}
+export function effortValueForEnv(env, value) {
+    const list = effortChoices(env);
+    return list[effortIndexFor(env, value)]?.value ?? DEFAULT_EFFORT;
+}
+export function nextEffortValueForEnv(env, value, delta) {
+    const list = effortChoices(env);
+    const current = effortIndexFor(env, value);
+    const next = ((current + delta) % list.length + list.length) % list.length;
+    return list[next]?.value ?? DEFAULT_EFFORT;
 }
 /** Every known picker effort, for env-var validation. */
 export const ALL_EFFORTS = [

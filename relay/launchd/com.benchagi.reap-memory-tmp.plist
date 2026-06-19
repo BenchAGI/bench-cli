@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.benchagi.reap-memory-tmp — reclaim leaked memory-core reindex scratch
+  files (*.sqlite.tmp-* / *.sqlite.backup-* + -wal/-shm siblings) left behind by
+  hard-killed reindexes.
+  Install with (adjust the paths below to where you cloned this repo):
+    cp com.benchagi.reap-memory-tmp.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.benchagi.reap-memory-tmp.plist
+  Every path here is a stable, user-owned path under $HOME — NEVER under /tmp.
+  REAP_EXTRA_ROOTS (colon-separated) lets you add memory roots beyond the
+  defaults; roots that do not exist on this host are silently skipped.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.benchagi.reap-memory-tmp</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/youruser/.openclaw/bin/reap-memory-tmp.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/youruser</string>
+        <key>REAP_AGE_HOURS</key>
+        <string>2</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/reap-memory-tmp.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/youruser/Library/Logs/BenchAGI/reap-memory-tmp.err.log</string>
+</dict>
+</plist>
