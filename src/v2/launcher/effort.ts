@@ -64,6 +64,18 @@ export function effortIndexFor(env: EffortEnv, value: PickerEffort | undefined):
   return fallback >= 0 ? fallback : 0;
 }
 
+export function effortValueForEnv(env: EffortEnv, value: PickerEffort | undefined): PickerEffort {
+  const list = effortChoices(env);
+  return list[effortIndexFor(env, value)]?.value ?? DEFAULT_EFFORT;
+}
+
+export function nextEffortValueForEnv(env: EffortEnv, value: PickerEffort | undefined, delta: number): PickerEffort {
+  const list = effortChoices(env);
+  const current = effortIndexFor(env, value);
+  const next = ((current + delta) % list.length + list.length) % list.length;
+  return list[next]?.value ?? DEFAULT_EFFORT;
+}
+
 /** Every known picker effort, for env-var validation. */
 export const ALL_EFFORTS: readonly PickerEffort[] = [
   "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultracode",

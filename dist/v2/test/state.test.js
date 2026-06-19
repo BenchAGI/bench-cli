@@ -26,6 +26,7 @@ test("round-trip a State shape preserves recentAgents LRU order", async () => {
         assert.equal(parsed.defaultAgent, "kestrel-aurelius");
         assert.deepEqual(parsed.recentAgents, ["kestrel-aurelius", "cole", "ember"]);
         assert.equal(parsed.perAgent.cole?.liveness, "batch");
+        assert.equal(parsed.perInstance.SYGSEOnNo57zf4QSmbcS?.effort, "ultracode");
     }
     finally {
         await rm(tmp, { recursive: true, force: true });

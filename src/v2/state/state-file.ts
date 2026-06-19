@@ -11,9 +11,8 @@ export type PerAgentState = {
 };
 
 // Per-instance seat preferences, persisted across sessions so the seat launches
-// in the right mode for whichever instance you're operating. `effort` maps to
-// Claude Code's `--effort` launch flag. (ultracode is NOT here yet: the `claude`
-// CLI has no launch flag for it — see seat.ts; that's a tracked follow-up.)
+// in the right mode for whichever instance you're operating. `effort` is the
+// picker value; local seats translate it to provider-specific flags/env.
 export type PerInstanceState = {
   effort?: string;
 };
