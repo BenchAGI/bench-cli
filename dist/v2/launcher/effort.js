@@ -50,6 +50,16 @@ export function effortIndexFor(env, value) {
     const fallback = list.findIndex((c) => c.value === DEFAULT_EFFORT);
     return fallback >= 0 ? fallback : 0;
 }
+export function effortValueForEnv(env, value) {
+    const list = effortChoices(env);
+    return list[effortIndexFor(env, value)]?.value ?? DEFAULT_EFFORT;
+}
+export function nextEffortValueForEnv(env, value, delta) {
+    const list = effortChoices(env);
+    const current = effortIndexFor(env, value);
+    const next = ((current + delta) % list.length + list.length) % list.length;
+    return list[next]?.value ?? DEFAULT_EFFORT;
+}
 /** Every known picker effort, for env-var validation. */
 export const ALL_EFFORTS = [
     "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultracode",

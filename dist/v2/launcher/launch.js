@@ -7,6 +7,7 @@ import { loadFreshFirebaseIdToken } from "../auth/firebase-token.js";
 import { playBoot } from "./boot-bridge.js";
 import { checkForUpdate, updateBanner } from "./updates.js";
 import { hasAccountToken, loadAccount, resolveApiBase } from "./account.js";
+import { getPerInstanceEffort, setPerInstanceEffort } from "../state/state-file.js";
 import { resolveRoster } from "./roster.js";
 import { runCloudSeat } from "./cloud-seat.js";
 import { runLocalClaudeSeat, runLocalCodexSeat } from "./seat.js";
@@ -29,14 +30,23 @@ export async function runLaunch(opts = {}) {
         eprintln(c.dim("  • Running your own gateway? Check:  benchagi agents list"));
         return;
     }
+    // Resolve the instance once so the picker can default to — and persist —
+    // this workspace's seat mode (effort/ultracode) across sessions.
+    const launchAccount = await loadAccount().catch(() => null);
+    const instanceId = launchAccount?.instanceId?.trim() || process.env.BENCHAGI_INSTANCE_ID?.trim() || "";
     for (;;) {
         const choice = await runPicker(agents, {
-            initialEffort: initialPickerEffort(),
+            initialEffort: await initialPickerEffort(instanceId),
             initialThinking: opts.noThinking ? "off" : "on",
         });
         if (!choice || choice.mode === "quit" || !choice.agent) {
             println(c.dim("  Until next flight."));
             break;
+        }
+        // Remember the chosen effort (incl. ultracode) for this instance so the next
+        // session defaults to it, while a different instance keeps its own mode.
+        if (choice.effort && instanceId) {
+            void setPerInstanceEffort(instanceId, choice.effort).catch(() => { });
         }
         const seatSettings = {
             model: choice.model,
@@ -65,9 +75,18 @@ export async function runLaunch(opts = {}) {
         await runCloudSeat(choice.agent.agentId, { ...opts, ...seatSettings }); // tunnel = default Bench/company harness path
     }
 }
-function initialPickerEffort() {
-    const value = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "medium").toLowerCase();
-    return ALL_EFFORTS.includes(value) ? value : "medium";
+// The picker's default effort, resolved per-instance so each workspace remembers
+// its own mode across sessions: an explicit env override wins, else the instance's
+// saved preference (incl. `ultracode`, which is a PickerEffort), else "medium".
+async function initialPickerEffort(instanceId) {
+    const isValid = (v) => ALL_EFFORTS.includes(v);
+    const envValue = (process.env.BENCHAGI_SEAT_EFFORT || process.env.BENCHAGI_CODEX_EFFORT || "").toLowerCase();
+    if (envValue && isValid(envValue))
+        return envValue;
+    const saved = (await getPerInstanceEffort(instanceId).catch(() => undefined))?.toLowerCase();
+    if (saved && isValid(saved))
+        return saved;
+    return "medium";
 }
 async function resolveDirectGatewayUrl(configured) {
     const direct = (configured || process.env.BENCHAGI_DIRECT_GATEWAY_URL || "").trim();

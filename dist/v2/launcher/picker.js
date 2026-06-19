@@ -4,7 +4,7 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useState } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
 import { modelChoices as modelChoicesForEnv } from "./models.js";
-import { effortChoices, effortIndexFor, DEFAULT_EFFORT } from "./effort.js";
+import { effortChoices, effortIndexFor, effortValueForEnv, nextEffortValueForEnv, DEFAULT_EFFORT, } from "./effort.js";
 const IR = "#ff2d55";
 // Secondary text. Brightened from the old #7c7c87 (very low contrast on dark
 // terminals) for legibility; inactive option rows also drop dimColor (below).
@@ -68,15 +68,17 @@ function Picker({ agents, opts, onSelect, }) {
     const [configRowIndex, setConfigRowIndex] = useState(0);
     const [modeIndex, setModeIndex] = useState(0);
     const [modelIndex, setModelIndex] = useState(0);
-    const [effortIndex, setEffortIndex] = useState(() => effortIndexFor(modelEnv(MODES[0].value), opts.initialEffort ?? DEFAULT_EFFORT));
+    const [effortValue, setEffortValue] = useState(opts.initialEffort ?? DEFAULT_EFFORT);
     const [thinkingIndex, setThinkingIndex] = useState(Math.max(0, THINKING.findIndex((choice) => choice.value === (opts.initialThinking ?? "on"))));
     const selectedAgentIndex = agentIndex >= agents.length ? 0 : clampIndex(agentIndex, agents.length);
     const agent = agents[selectedAgentIndex];
     const mode = MODES[clampIndex(modeIndex, MODES.length)].value;
     const models = modelChoices(mode);
     const modelChoice = models[clampIndex(modelIndex, models.length)];
-    const efforts = effortChoices(modelEnv(mode));
-    const effort = efforts[clampIndex(effortIndex, efforts.length)];
+    const env = modelEnv(mode);
+    const efforts = effortChoices(env);
+    const effortIndex = effortIndexFor(env, effortValue);
+    const effort = efforts[effortIndex];
     const thinking = THINKING[clampIndex(thinkingIndex, THINKING.length)];
     const configRow = CONFIG_ROWS[clampIndex(configRowIndex, CONFIG_ROWS.length)].value;
     const agentChoices = [
@@ -98,16 +100,17 @@ function Picker({ agents, opts, onSelect, }) {
     };
     const changeConfigValue = (delta) => {
         if (configRow === "environment") {
-            const newMode = MODES[clampIndex(modeIndex + delta, MODES.length)].value;
             setModeIndex((i) => clampIndex(i + delta, MODES.length));
             setModelIndex(0); // model lists differ per env; reset to "Default"
-            setEffortIndex(effortIndexFor(modelEnv(newMode), effort.value)); // preserve effort by value
+            // Keep the preferred effort value intact across env changes. If the current
+            // env cannot display it (e.g. Cloud vs Ultra Code), it falls back only for
+            // display/launch in that env and reappears when a supporting env is selected.
         }
         else if (configRow === "model") {
             setModelIndex((i) => clampIndex(i + delta, models.length));
         }
         else if (configRow === "effort") {
-            setEffortIndex((i) => clampIndex(i + delta, efforts.length));
+            setEffortValue(nextEffortValueForEnv(env, effortValue, delta));
         }
         else if (configRow === "thinking") {
             setThinkingIndex((i) => clampIndex(i + delta, THINKING.length));
@@ -160,7 +163,7 @@ function Picker({ agents, opts, onSelect, }) {
         label: `${row.label.padEnd(12)} ${configValue(row.value, {
             modeLabel: MODES[clampIndex(modeIndex, MODES.length)].label,
             modelLabel: modelChoice.label,
-            effortLabel: effort.label,
+            effortLabel: efforts.find((choice) => choice.value === effortValueForEnv(env, effortValue))?.label ?? effort.label,
             thinkingLabel: thinking.label,
         })}`,
     }));

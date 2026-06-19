@@ -7,7 +7,14 @@ import { Box, Text, render, useApp, useInput } from "ink";
 import type { ThinkingMode } from "../render/stream.js";
 import type { LauncherAgent } from "./roster.js";
 import { modelChoices as modelChoicesForEnv, type ModelEnv } from "./models.js";
-import { effortChoices, effortIndexFor, DEFAULT_EFFORT, type PickerEffort } from "./effort.js";
+import {
+  effortChoices,
+  effortIndexFor,
+  effortValueForEnv,
+  nextEffortValueForEnv,
+  DEFAULT_EFFORT,
+  type PickerEffort,
+} from "./effort.js";
 
 export type PickerMode = "tunnel" | "direct" | "local-claude" | "local-codex" | "quit";
 export type { PickerEffort };
@@ -126,9 +133,7 @@ function Picker({
   const [configRowIndex, setConfigRowIndex] = useState(0);
   const [modeIndex, setModeIndex] = useState(0);
   const [modelIndex, setModelIndex] = useState(0);
-  const [effortIndex, setEffortIndex] = useState(() =>
-    effortIndexFor(modelEnv(MODES[0]!.value), opts.initialEffort ?? DEFAULT_EFFORT),
-  );
+  const [effortValue, setEffortValue] = useState<PickerEffort>(opts.initialEffort ?? DEFAULT_EFFORT);
   const [thinkingIndex, setThinkingIndex] = useState(
     Math.max(0, THINKING.findIndex((choice) => choice.value === (opts.initialThinking ?? "on"))),
   );
@@ -138,8 +143,10 @@ function Picker({
   const mode = MODES[clampIndex(modeIndex, MODES.length)]!.value;
   const models = modelChoices(mode);
   const modelChoice = models[clampIndex(modelIndex, models.length)]!;
-  const efforts = effortChoices(modelEnv(mode));
-  const effort = efforts[clampIndex(effortIndex, efforts.length)]!;
+  const env = modelEnv(mode);
+  const efforts = effortChoices(env);
+  const effortIndex = effortIndexFor(env, effortValue);
+  const effort = efforts[effortIndex]!;
   const thinking = THINKING[clampIndex(thinkingIndex, THINKING.length)]!;
   const configRow = CONFIG_ROWS[clampIndex(configRowIndex, CONFIG_ROWS.length)]!.value;
 
@@ -163,14 +170,15 @@ function Picker({
 
   const changeConfigValue = (delta: number) => {
     if (configRow === "environment") {
-      const newMode = MODES[clampIndex(modeIndex + delta, MODES.length)]!.value;
       setModeIndex((i) => clampIndex(i + delta, MODES.length));
       setModelIndex(0); // model lists differ per env; reset to "Default"
-      setEffortIndex(effortIndexFor(modelEnv(newMode), effort.value)); // preserve effort by value
+      // Keep the preferred effort value intact across env changes. If the current
+      // env cannot display it (e.g. Cloud vs Ultra Code), it falls back only for
+      // display/launch in that env and reappears when a supporting env is selected.
     } else if (configRow === "model") {
       setModelIndex((i) => clampIndex(i + delta, models.length));
     } else if (configRow === "effort") {
-      setEffortIndex((i) => clampIndex(i + delta, efforts.length));
+      setEffortValue(nextEffortValueForEnv(env, effortValue, delta));
     } else if (configRow === "thinking") {
       setThinkingIndex((i) => clampIndex(i + delta, THINKING.length));
     }
@@ -216,7 +224,7 @@ function Picker({
     label: `${row.label.padEnd(12)} ${configValue(row.value, {
       modeLabel: MODES[clampIndex(modeIndex, MODES.length)]!.label,
       modelLabel: modelChoice.label,
-      effortLabel: effort.label,
+      effortLabel: efforts.find((choice) => choice.value === effortValueForEnv(env, effortValue))?.label ?? effort.label,
       thinkingLabel: thinking.label,
     })}`,
   }));
