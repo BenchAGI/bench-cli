@@ -24,6 +24,9 @@ test("round-trip a State shape preserves recentAgents LRU order", async () => {
       perAgent: {
         cole: { liveness: "batch" },
       },
+      perInstance: {
+        SYGSEOnNo57zf4QSmbcS: { effort: "ultracode" },
+      },
     };
     await writeFile(path, JSON.stringify(state, null, 2));
     const raw = await readFile(path, "utf8");

@@ -10,11 +10,20 @@ export type PerAgentState = {
   liveness?: Liveness;
 };
 
+// Per-instance seat preferences, persisted across sessions so the seat launches
+// in the right mode for whichever instance you're operating. `effort` maps to
+// Claude Code's `--effort` launch flag. (ultracode is NOT here yet: the `claude`
+// CLI has no launch flag for it — see seat.ts; that's a tracked follow-up.)
+export type PerInstanceState = {
+  effort?: string;
+};
+
 export type State = {
   version: 1;
   defaultAgent?: string;
   recentAgents: string[];
   perAgent: Record<string, PerAgentState>;
+  perInstance: Record<string, PerInstanceState>;
 };
 
 const STATE_DIR = join(homedir(), ".config", "benchagi");
@@ -24,6 +33,7 @@ const DEFAULT_STATE: State = {
   version: 1,
   recentAgents: [],
   perAgent: {},
+  perInstance: {},
 };
 
 export async function loadState(): Promise<State> {
@@ -42,6 +52,9 @@ export async function loadState(): Promise<State> {
         : [],
       perAgent: typeof parsed.perAgent === "object" && parsed.perAgent !== null
         ? (parsed.perAgent as Record<string, PerAgentState>)
+        : {},
+      perInstance: typeof parsed.perInstance === "object" && parsed.perInstance !== null
+        ? (parsed.perInstance as Record<string, PerInstanceState>)
         : {},
     };
   } catch (err: unknown) {
@@ -95,5 +108,22 @@ export async function setPerAgent(
 ): Promise<void> {
   const state = await loadState();
   state.perAgent[agentId] = { ...state.perAgent[agentId], ...patch };
+  await saveState(state);
+}
+
+// Per-instance seat preference: the effort the seat launches with for a given
+// instance, so each workspace keeps its own mode across sessions. Empty/blank
+// instanceId is ignored (no global bucket — avoids one instance's mode leaking
+// to an unidentified launch).
+export async function getPerInstanceEffort(instanceId: string): Promise<string | undefined> {
+  if (!instanceId.trim()) return undefined;
+  const state = await loadState();
+  return state.perInstance[instanceId]?.effort;
+}
+
+export async function setPerInstanceEffort(instanceId: string, effort: string): Promise<void> {
+  if (!instanceId.trim() || !effort.trim()) return;
+  const state = await loadState();
+  state.perInstance[instanceId] = { ...state.perInstance[instanceId], effort };
   await saveState(state);
 }

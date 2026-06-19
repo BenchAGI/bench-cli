@@ -8,6 +8,7 @@ const DEFAULT_STATE = {
     version: 1,
     recentAgents: [],
     perAgent: {},
+    perInstance: {},
 };
 export async function loadState() {
     try {
@@ -25,6 +26,9 @@ export async function loadState() {
                 : [],
             perAgent: typeof parsed.perAgent === "object" && parsed.perAgent !== null
                 ? parsed.perAgent
+                : {},
+            perInstance: typeof parsed.perInstance === "object" && parsed.perInstance !== null
+                ? parsed.perInstance
                 : {},
         };
     }
@@ -71,5 +75,22 @@ export async function getProjectAgent() {
 export async function setPerAgent(agentId, patch) {
     const state = await loadState();
     state.perAgent[agentId] = { ...state.perAgent[agentId], ...patch };
+    await saveState(state);
+}
+// Per-instance seat preference: the effort the seat launches with for a given
+// instance, so each workspace keeps its own mode across sessions. Empty/blank
+// instanceId is ignored (no global bucket — avoids one instance's mode leaking
+// to an unidentified launch).
+export async function getPerInstanceEffort(instanceId) {
+    if (!instanceId.trim())
+        return undefined;
+    const state = await loadState();
+    return state.perInstance[instanceId]?.effort;
+}
+export async function setPerInstanceEffort(instanceId, effort) {
+    if (!instanceId.trim() || !effort.trim())
+        return;
+    const state = await loadState();
+    state.perInstance[instanceId] = { ...state.perInstance[instanceId], effort };
     await saveState(state);
 }
