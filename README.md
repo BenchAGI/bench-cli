@@ -36,6 +36,10 @@ $ benchagi --no-launch     # skip it; open the REPL with your last agent
   Exit a session to return to the picker.
 - **Login:** if you're not signed in, the launcher runs `benchagi auth login`
   (Firebase browser hand-off) first, so agents know who you are.
+- **Local-seat PR contract:** local Claude/Codex seats include the Hammer/Anvil
+  readiness rule: crew-authored PRs stay draft until Anvil passes them, and
+  handoffs include scope, touched surfaces, Firebase/deploy impact, local gates,
+  smoke evidence, blockers, and follow-ups.
 - **Roster = entitlements:** the agents shown are exactly what you're provisioned
   for (`GET /api/v1/cli/entitlements`), cached for offline; falls back to
   `agents list` for local dev.
@@ -128,6 +132,11 @@ run:
 benchagi install-app
 ```
 
+The Dock app records the exact `benchagi` installation that created it. If that
+installation moves or is removed, it falls back to `PATH`, preferring user/global
+package-manager bins before Homebrew so an older formula does not shadow a newer
+curl or npm install.
+
 `benchagi doctor` is the canonical post-install check. It verifies the V2
 streaming console: local Gateway protocol support, event-frame methods,
 discovered agents, and Firebase Direct identity when signed in.
@@ -158,7 +167,8 @@ formula stub for publishing it is in `scripts/homebrew/benchagi.rb`.
 
 Homebrew leaves Dock mutation to the user. Run `benchagi install-app` after
 `brew install` for the same macOS Dock launcher experience as the curl
-installer.
+installer. The generated app pins the Homebrew formula that created it, so rerun
+`benchagi install-app` after `brew upgrade benchagi`.
 
 ## Requirements
 
@@ -300,7 +310,7 @@ V2 (`benchagi` native streaming):
 - [x] Device-identity signed handshake (piggybacks on openclaw's pairing)
 - [x] Auto-discovery of gateway token from `openclaw.json`
 - [x] Hammer-Anvil reviewed spec (PRE-SPEC-VERIFICATION + 6 ADRs + ANVIL-2)
-- [ ] Homebrew tap version bump for v1.0.0
+- [ ] Homebrew tap publish for v1.0.0-beta.12
 - [ ] Cloud-relay primary transport (v1.1, gated on cloud chat endpoint)
 - [ ] Cross-machine `--device-flow` (PKCE code-paste)
 - [ ] Migrate useful `bench` verbs into `benchagi` native protocol

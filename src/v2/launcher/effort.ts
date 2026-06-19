@@ -1,7 +1,7 @@
 // effort.ts — the effort taxonomy, kept pure (no React) so it's unit-testable and
 // shared. Effort is environment-specific:
 //   • local Claude Code has the `ultracode` preset (xhigh + dynamic-workflow
-//     orchestration), set via the CLAUDE_CODE_EFFORT_LEVEL env — NOT a --effort flag.
+//     orchestration), set via session `--settings`, not as a literal --effort value.
 //   • the OpenClaw cloud harness exposes off…max thinkingLevels (no ultracode).
 //   • Codex reasoning effort is minimal…high.
 // Conflating these is the bug behind "Ultra Code runs max thinking".

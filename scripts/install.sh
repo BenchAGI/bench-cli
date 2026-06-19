@@ -51,6 +51,28 @@ node_hint() {
   fi
 }
 
+global_bin_for_pm() {
+  case "$PM" in
+    pnpm)
+      pnpm bin -g 2>/dev/null || true
+      ;;
+    yarn)
+      yarn global bin 2>/dev/null || true
+      ;;
+    npm)
+      NPM_BIN=$(npm bin -g 2>/dev/null || true)
+      if [ -n "$NPM_BIN" ]; then
+        printf '%s\n' "$NPM_BIN"
+        return
+      fi
+      NPM_PREFIX=$(npm prefix -g 2>/dev/null || true)
+      if [ -n "$NPM_PREFIX" ]; then
+        printf '%s/bin\n' "$NPM_PREFIX"
+      fi
+      ;;
+  esac
+}
+
 PACKAGE=${BENCHAGI_PACKAGE:-https://github.com/BenchAGI/bench-cli/archive/refs/heads/main.tar.gz}
 
 step 'Detecting operating system'
@@ -124,32 +146,32 @@ case "$PM" in
 esac
 ok "Installed $PACKAGE"
 
+step 'Refreshing PATH for the installed CLI'
+GLOBAL_BIN=$(global_bin_for_pm)
+if [ -n "$GLOBAL_BIN" ] && [ -d "$GLOBAL_BIN" ]; then
+  PATH="$GLOBAL_BIN:$PATH"
+  export PATH
+  ok "Using $PM global bin first: $GLOBAL_BIN"
+else
+  warn "Could not resolve the $PM global bin; using the existing PATH"
+fi
+
 step 'Verifying benchagi streaming console'
 if ! command -v benchagi >/dev/null 2>&1; then
-  NPM_BIN=''
-  if command -v npm >/dev/null 2>&1; then
-    NPM_BIN=$(npm bin -g 2>/dev/null || npm prefix -g 2>/dev/null | sed 's:$:/bin:' || printf '%s' '')
+  if [ -n "${GLOBAL_BIN:-}" ]; then
+    die "benchagi is not on PATH. Add the $PM global bin to PATH: export PATH=\"$GLOBAL_BIN:\$PATH\""
   fi
-
-  if [ -n "$NPM_BIN" ]; then
-    die "benchagi is not on PATH. Add npm global bin to PATH: export PATH=\"$NPM_BIN:\$PATH\""
-  fi
-  die 'benchagi is not on PATH. Add your npm global bin directory to PATH.'
+  die 'benchagi is not on PATH. Add your package manager global bin directory to PATH.'
 fi
 benchagi version >/dev/null
 ok "benchagi (canonical) is available at $(command -v benchagi)"
 
 step 'Verifying bench alias binary'
 if ! command -v bench >/dev/null 2>&1; then
-  NPM_BIN=''
-  if command -v npm >/dev/null 2>&1; then
-    NPM_BIN=$(npm bin -g 2>/dev/null || npm prefix -g 2>/dev/null | sed 's:$:/bin:' || printf '%s' '')
+  if [ -n "${GLOBAL_BIN:-}" ]; then
+    die "bench is not on PATH. Add the $PM global bin to PATH: export PATH=\"$GLOBAL_BIN:\$PATH\""
   fi
-
-  if [ -n "$NPM_BIN" ]; then
-    die "bench is not on PATH. Add npm global bin to PATH: export PATH=\"$NPM_BIN:\$PATH\""
-  fi
-  die 'bench is not on PATH. Add your npm global bin directory to PATH.'
+  die 'bench is not on PATH. Add your package manager global bin directory to PATH.'
 fi
 ok "bench (deprecated alias) is available at $(command -v bench)"
 

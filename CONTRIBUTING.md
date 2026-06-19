@@ -49,3 +49,6 @@ npm run lint
    - `npm run test:v2`
    - (`npm run lint` is recommended)
 4. Open a draft PR with a clear summary, validation notes, and any follow-ups.
+   Include scope, touched surfaces, Firebase/deploy impact when relevant,
+   validation commands with outcomes, smoke/screenshot evidence, blockers, and
+   follow-ups. Crew-authored PRs stay draft until Anvil passes them.
