@@ -352,6 +352,238 @@ await test("`bench forge status` renders customer projection title + customer-ag
   });
 });
 
+// --- bench forge contributor flow: pull / pack / deliver / contrib-status ---
+
+await test("`bench forge pull` writes scaffold + .forge-contract.json", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const outDir = path.join(home, "work");
+    await withForgeMock(async ({ method, url }, res) => {
+      assert.equal(method, "GET");
+      assert.equal(url.pathname, "/api/v1/forge/packets/agent/fp_pull/contract-pack");
+      sendJson(res, {
+        packetId: "fp_pull",
+        version: 2,
+        ipClass: "black-box",
+        interfaces: [{ path: "adder.d.ts", dts: "export declare function add(a:number,b:number):number;\n" }],
+        fixtures: [{ path: "case1.json", content: '{"a":1}\n' }],
+        acceptanceTests: [{ path: "adder.spec.ts", content: "// test\n" }],
+        readme: "# Add\n",
+        contentHash: "f".repeat(64),
+        baseContractHash: "0".repeat(64),
+      });
+    }, async (apiBase) => {
+      const { code, stdout, stderr } = await runBenchEnv(
+        ["forge", "pull", "fp_pull", "--out", outDir],
+        forgeEnv(apiBase),
+      );
+      assert.equal(code, 0, stderr);
+      assert.match(stdout, /Contract-pack pulled/);
+      // Scaffold landed on disk.
+      assert.ok(existsSync(path.join(outDir, "interfaces", "adder.d.ts")));
+      assert.ok(existsSync(path.join(outDir, "fixtures", "case1.json")));
+      assert.ok(existsSync(path.join(outDir, "tests", "adder.spec.ts")));
+      assert.ok(existsSync(path.join(outDir, "README.md")));
+      const contract = JSON.parse(readFileSync(path.join(outDir, ".forge-contract.json"), "utf8"));
+      assert.equal(contract.packetId, "fp_pull");
+      // The pack contentHash becomes the manifest baseContractHash anchor.
+      assert.equal(contract.contentHash, "f".repeat(64));
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge pack` signs an envelope that the server verifier accepts", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const spki = publicKey.export({ format: "der", type: "spki" });
+    const pubB64 = Buffer.from(spki.subarray(spki.length - 32)).toString("base64");
+    const keyPath = path.join(home, "priv.pem");
+    writeFileSync(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+
+    // A pulled dir: scaffold (must be excluded) + contributor files (must ship).
+    const dir = path.join(home, "work");
+    mkdirSync(path.join(dir, "interfaces"), { recursive: true });
+    writeFileSync(path.join(dir, "interfaces", "x.d.ts"), "// scaffold\n");
+    writeFileSync(path.join(dir, "README.md"), "# scaffold\n");
+    writeFileSync(
+      path.join(dir, ".forge-contract.json"),
+      JSON.stringify({ packetId: "fp_pack", contentHash: "a".repeat(64) }),
+    );
+    // Contributor payload.
+    writeFileSync(path.join(dir, "impl.js"), "export const add=(a,b)=>a+b;\n");
+    mkdirSync(path.join(dir, "src"), { recursive: true });
+    writeFileSync(path.join(dir, "src", "lib.ts"), "export const k=1;\n");
+
+    const bp = path.join(home, "out.benchpack.json");
+    const { code, stdout, stderr } = await runBenchEnv(
+      ["forge", "pack", dir, "--key", keyPath, "--out", bp, "--json"],
+      { NO_COLOR: "1" },
+    );
+    assert.equal(code, 0, stderr);
+    const meta = JSON.parse(stdout);
+    assert.match(meta.benchpackId, /^bp-[a-z2-7]+$/);
+    assert.equal(meta.fileCount, 2, "only the 2 contributor files, scaffold excluded");
+
+    // The emitted envelope must clear the REAL verifyBenchpack against the key.
+    const { verifyBenchpack } = await import("../src/lib/benchpack/index.mjs");
+    const env = JSON.parse(readFileSync(bp, "utf8"));
+    assert.deepEqual(
+      Object.keys(env.files).sort(),
+      ["impl.js", "src/lib.ts"],
+      "scaffold (interfaces/, README.md, .forge-contract.json) excluded from payload",
+    );
+    const r = verifyBenchpack({
+      manifest: env.manifest,
+      files: env.files,
+      signature: env.signature,
+      publicKey: pubB64,
+    });
+    assert.equal(r.ok, true, `verify failed: ${JSON.stringify(r)}`);
+    // The manifest binds to the contract anchor.
+    assert.equal(env.manifest.packetId, "fp_pack");
+    assert.equal(env.manifest.baseContractHash, "a".repeat(64));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge deliver` runs init → upload → finalize against a mock", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    // A minimal valid envelope file (content is opaque to deliver; it re-hashes
+    // the bytes and uploads verbatim).
+    const bp = path.join(home, "d.benchpack.json");
+    const envelope = JSON.stringify({ manifest: { packetId: "fp_del" }, files: {}, signature: {} });
+    writeFileSync(bp, envelope);
+    const { createHash } = await import("node:crypto");
+    const expectSha = createHash("sha256").update(Buffer.from(envelope, "utf8")).digest("hex");
+
+    let sawInit = false;
+    let sawUpload = false;
+    let uploadedBytes = null;
+    let uploadHeaders = null;
+    await withForgeMock(async ({ method, url, headers }, res, body) => {
+      if (url.pathname.endsWith("/contributions/init")) {
+        sawInit = true;
+        assert.equal(method, "POST");
+        const b = JSON.parse(body);
+        // Idempotency key defaults to sha256(envelope) when not supplied.
+        assert.equal(b.idempotencyKey, expectSha);
+        assert.equal(b.declaredEnvelopeSha256, expectSha);
+        // The base URL for the signed upload points back at this mock.
+        sendJson(res, {
+          ok: true,
+          contributionId: "ctb_del",
+          uploadUrl: `${url.origin}/upload`,
+          lifecycleState: "building",
+        });
+        return;
+      }
+      if (url.pathname === "/upload" && method === "PUT") {
+        sawUpload = true;
+        uploadedBytes = body;
+        uploadHeaders = headers;
+        res.statusCode = 200;
+        res.end("");
+        return;
+      }
+      if (url.pathname.endsWith("/contributions/finalize")) {
+        assert.equal(method, "POST");
+        assert.equal(JSON.parse(body).contributionId, "ctb_del");
+        sendJson(res, {
+          lifecycleState: "quarantine",
+          deliveryStatus: "finalized",
+          signatureVerified: true,
+          findings: [],
+        });
+        return;
+      }
+      sendJson(res, { error: "not found" }, 404);
+    }, async (apiBase) => {
+      const { code, stdout, stderr } = await runBenchEnv(
+        ["forge", "deliver", "fp_del", bp],
+        forgeEnv(apiBase),
+      );
+      assert.equal(code, 0, stderr);
+      assert.match(stdout, /Delivery finalized/);
+      assert.match(stdout, /verified/);
+    });
+    assert.ok(sawInit, "init was called");
+    assert.ok(sawUpload, "envelope was PUT to the upload URL");
+    assert.equal(uploadedBytes, envelope, "exact envelope bytes uploaded");
+    assert.equal(uploadHeaders["content-type"], "application/json");
+    assert.ok(uploadHeaders["x-goog-content-length-range"], "echoes the GCS length-range header");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge deliver` exits non-zero + prints findings on rejection", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "bench-forge-"));
+  try {
+    const bp = path.join(home, "r.benchpack.json");
+    writeFileSync(bp, JSON.stringify({ manifest: {}, files: {}, signature: {} }));
+    await withForgeMock(async ({ url, method }, res) => {
+      if (url.pathname.endsWith("/contributions/init")) {
+        sendJson(res, { ok: true, contributionId: "ctb_r", uploadUrl: `${url.origin}/upload`, lifecycleState: "building" });
+        return;
+      }
+      if (url.pathname === "/upload" && method === "PUT") {
+        res.statusCode = 200;
+        res.end("");
+        return;
+      }
+      if (url.pathname.endsWith("/contributions/finalize")) {
+        // 422 rejection carries sanitized findings + a code.
+        sendJson(res, {
+          lifecycleState: "building",
+          deliveryStatus: "rejected",
+          signatureVerified: false,
+          findings: ["verify failed at stage signature"],
+          code: "VERIFY_FAILED",
+        }, 422);
+        return;
+      }
+      sendJson(res, { error: "not found" }, 404);
+    }, async (apiBase) => {
+      const { code, stdout, stderr } = await runBenchEnv(["forge", "deliver", "fp_r", bp], forgeEnv(apiBase));
+      // forgeFetch throws on a 422 (non-ok); the CLI surfaces it as a failure.
+      assert.notEqual(code, 0);
+      const combined = stdout + stderr;
+      assert.match(combined, /422|rejected|verify failed|VERIFY_FAILED/i);
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+await test("`bench forge contrib-status` prints the sanitized status", async () => {
+  await withForgeMock(async ({ method, url }, res) => {
+    assert.equal(method, "GET");
+    assert.equal(url.pathname, "/api/v1/forge/packets/agent/fp_cs/contributions/status");
+    assert.equal(url.searchParams.get("contributionId"), "ctb_cs");
+    sendJson(res, {
+      lifecycleState: "quarantine",
+      deliveryStatus: "finalized",
+      signatureVerified: true,
+      findings: [],
+    });
+  }, async (apiBase) => {
+    const { code, stdout, stderr } = await runBenchEnv(
+      ["forge", "contrib-status", "fp_cs", "ctb_cs"],
+      forgeEnv(apiBase),
+    );
+    assert.equal(code, 0, stderr);
+    assert.match(stdout, /quarantine/);
+    assert.match(stdout, /finalized/);
+    assert.match(stdout, /verified/);
+  });
+});
+
 await test("profileIsFresh: fresh within window, false when stale/missing/garbage", () => {
   assert.equal(profileIsFresh(null), false);
   assert.equal(profileIsFresh({}), false);
@@ -432,10 +664,17 @@ function forgePacket(overrides = {}) {
 function withForgeMock(handler, fn) {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      Promise.resolve(handler({ method: req.method, url, headers: req.headers }, res)).catch((err) => {
-        res.statusCode = 500;
-        res.end(String(err?.message ?? err));
+      const host = req.headers.host ?? "127.0.0.1";
+      const url = new URL(req.url ?? "/", `http://${host}`);
+      let body = "";
+      req.on("data", (b) => (body += b.toString("utf8")));
+      req.on("end", () => {
+        Promise.resolve(
+          handler({ method: req.method, url, headers: req.headers }, res, body),
+        ).catch((err) => {
+          if (!res.headersSent) res.statusCode = 500;
+          res.end(String(err?.message ?? err));
+        });
       });
     });
     server.on("error", reject);

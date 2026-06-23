@@ -11,18 +11,32 @@ import { table, c, relativeAge, truncate } from "../lib/format.mjs";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import {
+  forgePull,
+  forgePack,
+  forgeDeliver,
+  forgeContribStatus,
+} from "./forge-contribute.mjs";
 
 const DEFAULT_API_BASE = "https://benchagi.com/api";
 const KINDS = ["dev-request", "agent-behavior", "design-pass", "support", "content"];
 
 const HELP = `bench forge <subcommand> [options]
 
-Send requests to Bench's Forge and read the answers back — no GitHub needed.
+Send requests to Bench's Forge, read answers back, and — as a dispatched
+contributor — pull a contract-pack, sign a .benchpack, and deliver it. No
+GitHub needed.
 
-Subcommands:
+Packet subcommands:
   submit                Open a new Forge packet
   list                  List your Forge packets
   status <packetId>     Packet details + Bench's replies
+
+Contributor subcommands:
+  pull <packetId>            Pull your frozen contract-pack to disk
+  pack <dir> --key <pem>     Build + ed25519-sign a .benchpack from <dir>
+  deliver <packetId> <bp>    Init → upload → finalize a .benchpack delivery
+  contrib-status <p> <c>     Poll the sanitized status of delivery <c>
 
 Submit options:
   --title <text>        Short title (required)
@@ -35,6 +49,18 @@ List options:
   --state <name>        Filter by packet state (e.g. received)
   --since <ms>          Only packets updated since this UNIX ms timestamp
   --limit <n>           Max rows to print (default: 20)
+
+Pull options:
+  --out <dir>           Output dir (default: ./forge-<packetId>)
+
+Pack options:
+  --key <path>          ed25519 PRIVATE key PEM to sign with (required)
+  --out <file>          Envelope path (default: <dir>.benchpack.json)
+  --toolchain <text>    Optional toolchain provenance recorded in the manifest
+  --deps <text>         Optional resolved-dependency provenance string
+
+Deliver options:
+  --idempotency-key <k> Dedup key (default: sha256 of the envelope)
 
 Common options:
   --json                Output raw JSON
@@ -49,6 +75,10 @@ Examples:
   bench forge submit --title "Crop tool misaligns" --goal "Fix the crop handles drifting on rotated photos" --kind dev-request
   bench forge list --state received
   bench forge status fp_abc123
+  bench forge pull fp_abc123 --out ./work
+  bench forge pack ./work --key ./contributor-ed25519.pem
+  bench forge deliver fp_abc123 ./work.benchpack.json
+  bench forge contrib-status fp_abc123 ctb_xyz
 `;
 
 export async function cmdForge(argv) {
@@ -68,6 +98,14 @@ export async function cmdForge(argv) {
       return forgeList(flags);
     case "status":
       return forgeStatus(rest, flags);
+    case "pull":
+      return forgePull(rest, flags);
+    case "pack":
+      return forgePack(rest, flags);
+    case "deliver":
+      return forgeDeliver(rest, flags);
+    case "contrib-status":
+      return forgeContribStatus(rest, flags);
     default:
       process.stderr.write(`bench forge: unknown subcommand "${sub}"\n\n${HELP}`);
       return 64;
@@ -107,7 +145,7 @@ export function resolveForgeAuth({ env = process.env, home = homedir() } = {}) {
   return { apiKey, instanceId, apiBase };
 }
 
-function requireForgeAuth() {
+export function requireForgeAuth() {
   const auth = resolveForgeAuth();
   const missing = [];
   if (!auth.apiKey) missing.push("API key ($BENCH_API_KEY or ~/.openclaw/bench-cloud.key)");
@@ -124,7 +162,7 @@ function requireForgeAuth() {
 
 // --- HTTP ------------------------------------------------------------------
 
-async function forgeFetch(auth, method, pathname, { query, body } = {}) {
+export async function forgeFetch(auth, method, pathname, { query, body } = {}) {
   const url = new URL(auth.apiBase + pathname);
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
