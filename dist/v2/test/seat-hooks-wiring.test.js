@@ -27,6 +27,18 @@ test("Claude seat settings wire all four seat-bridge hooks", () => {
     assertSeatHookWired(hooks, "PostToolUse", "tool_result", "$BENCHAGI_SEAT_HOOK");
     assertSeatHookWired(hooks, "Stop", "session_stop", "$BENCHAGI_SEAT_HOOK");
 });
+test("Claude seat settings wire the memory-guard hook into Stop + SessionStart", () => {
+    // The self-maintaining memory index (bench-harness #101/#103) keeps MEMORY.md under the
+    // cold-start load budget. It needs the no-churn guard wired on Stop (coalesces a turn's
+    // memory writes) and SessionStart (catches out-of-band growth). Defensively wrapped, so a
+    // seat without the deployed guard script is a silent no-op.
+    const settings = JSON.parse(readFileSync(claudeSettingsPath, "utf8"));
+    const { hooks } = settings;
+    for (const event of ["Stop", "SessionStart"]) {
+        const match = commandsFor(hooks, event).find((c) => c.includes("memory-guard-hook.mjs"));
+        assert.ok(match, `expected ${event} to wire the memory-guard hook\n${JSON.stringify(commandsFor(hooks, event))}`);
+    }
+});
 test("Codex seat hooks wire all four seat-bridge events", () => {
     const workspace = mkdtempSync(join(tmpdir(), "codex-hooks-test-"));
     writeCodexHooks(workspace, {
