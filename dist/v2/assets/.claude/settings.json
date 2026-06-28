@@ -7,7 +7,10 @@
   "outputStyle": "BenchAGI",
   "hooks": {
     "SessionStart": [
-      { "matcher": "startup|resume", "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_start", "timeout": 10 } ] }
+      { "matcher": "startup|resume", "hooks": [
+        { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_start", "timeout": 10 },
+        { "type": "command", "command": "test -f \"$HOME/.openclaw/scripts/memory-guard-hook.mjs\" && node \"$HOME/.openclaw/scripts/memory-guard-hook.mjs\" || true", "timeout": 10 }
+      ] }
     ],
     "Notification": [
       { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" hook-notification" } ] }
@@ -22,7 +25,10 @@
       { "matcher": "*", "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" tool_result", "timeout": 10 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_stop", "timeout": 10 } ] }
+      { "hooks": [
+        { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" session_stop", "timeout": 10 },
+        { "type": "command", "command": "test -f \"$HOME/.openclaw/scripts/memory-guard-hook.mjs\" && node \"$HOME/.openclaw/scripts/memory-guard-hook.mjs\" || true", "timeout": 10 }
+      ] }
     ]
   }
 }
