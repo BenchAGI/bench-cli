@@ -1,13 +1,19 @@
 // Tests for the unified launcher model registry.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { modelChoices, shortModel, CLAUDE_MODELS } from "../launcher/models.js";
+import { modelChoices, shortModel, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL } from "../launcher/models.js";
 test("Claude list includes Opus 4.8 and the 1M variant", () => {
     const labels = CLAUDE_MODELS.map((m) => m.label);
     assert.ok(labels.includes("Opus 4.8"));
     assert.ok(labels.includes("Opus 4.8 (1M)"));
     assert.equal(CLAUDE_MODELS.find((m) => m.label === "Opus 4.8 (1M)")?.value, "claude-opus-4-8[1m]");
     assert.ok(labels.includes("Opus 4.6"));
+});
+test("Claude list includes Sonnet 5, the standing default", () => {
+    const labels = CLAUDE_MODELS.map((m) => m.label);
+    assert.ok(labels.includes("Sonnet 5"));
+    assert.equal(CLAUDE_MODELS.find((m) => m.label === "Sonnet 5")?.value, "claude-sonnet-5");
+    assert.equal(DEFAULT_CLAUDE_MODEL, "claude-sonnet-5");
 });
 test("1M Opus is local-Claude only (gateway catalog can't parse [1m])", () => {
     assert.ok(modelChoices("local-claude").some((m) => m.value === "claude-opus-4-8[1m]"));

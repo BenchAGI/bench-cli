@@ -2,11 +2,16 @@
 // their ids render as short names. Replaces the duplicated CLAUDE_MODELS /
 // CODEX_MODELS / MODEL_SHORT maps that lived in picker.tsx, cloud-seat.ts, and
 // roster.ts. Add or retire a model HERE and every surface updates.
+// Standing default for local Claude CLI seats (Cory, 2026-06-30) — every
+// company agent launches on this unless the picker is used to choose
+// something else for that session. See seat.ts:runLocalClaudeSeat.
+export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-5";
 // The 1M-context Opus 4.8 is a Claude Code context profile (`[1m]`). The OpenClaw
 // gateway model catalog parses `@profile` suffixes, not `[…]` brackets, so it's a
 // LOCAL Claude option only — cloud/direct agents fall back to base claude-opus-4-8.
 export const CLAUDE_MODELS = [
     { label: "Default", value: undefined },
+    { label: "Sonnet 5", value: "claude-sonnet-5" },
     { label: "Opus 4.8", value: "claude-opus-4-8" },
     { label: "Opus 4.8 (1M)", value: "claude-opus-4-8[1m]", short: "Opus 4.8·1M", envs: ["local-claude"] },
     { label: "Opus 4.6", value: "claude-opus-4-6" },

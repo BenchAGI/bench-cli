@@ -19,6 +19,7 @@ import { c, eprintln, println } from "../render/ansi.js";
 import { loadCreds } from "../state/keychain.js";
 import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 import { loadAccount } from "./account.js";
+import { DEFAULT_CLAUDE_MODEL, shortModel } from "./models.js";
 const SEAT_DIR = join(homedir(), ".config", "benchagi", "seats");
 const CLAUDE_SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "seat-workspace");
 const CODEX_SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "codex-seat-workspace");
@@ -311,7 +312,10 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
     const workspace = ensureClaudeSeatWorkspace();
     const gatewayUrl = resolveSeatGatewayUrl(opts.gatewayUrl);
     const seatSessionId = randomUUID();
-    const model = opts.model?.trim() || agent.model || "claude-opus-4-8";
+    // Remote entitlements pin (`agent.model`) is intentionally NOT consulted here —
+    // Sonnet 5 is the standing default for all local Claude CLI seats (Cory,
+    // 2026-06-30). An explicit picker choice still wins for that one session.
+    const model = opts.model?.trim() || DEFAULT_CLAUDE_MODEL;
     const effort = seatEffort(opts.effort);
     const env = bridgeEnv({
         agent,
@@ -362,7 +366,7 @@ export async function runLocalClaudeSeat(agent, opts = {}) {
                     ...env,
                     BENCH_AGENT_ID: agent.agentId,
                     BENCH_AGENT_NAME: agent.name,
-                    BENCH_AGENT_MODEL_SHORT: agent.modelShort,
+                    BENCH_AGENT_MODEL_SHORT: shortModel(model),
                     BENCH_AGENT_ROLE: agent.role ?? "",
                     BENCH_AGENT_EMOJI: agent.emoji,
                     CLAUDE_PROJECT_DIR: workspace,
