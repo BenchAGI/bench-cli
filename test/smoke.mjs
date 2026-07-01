@@ -198,6 +198,7 @@ await test("make-dock-app pins the invoking CLI before PATH fallback", () => {
 await test("build-dmg creates a generic PATH-only launcher", () => {
   const text = readFileSync(path.resolve(__dirname, "../scripts/build-dmg.sh"), "utf8");
   assert.match(text, /BENCHAGI_NO_CLI_PIN=1/);
+  assert.match(text, /BENCHAGI_SKIP_DOCK_PIN=1/);
   assert.match(text, /make-dock-app\.sh/);
 });
 

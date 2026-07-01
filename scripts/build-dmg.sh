@@ -24,8 +24,8 @@ STAGE="$STAGE_PARENT/BenchAGI"
 mkdir -p "$STAGE"
 
 # Build the .app into the staging folder (reuses the single source of truth).
-# Generic DMGs must not capture the build machine's local benchagi path.
-BENCHAGI_APP_DIR="$STAGE" BENCHAGI_NO_CLI_PIN=1 bash "$SCRIPT_DIR/make-dock-app.sh"
+# Generic DMGs must not capture the build machine's local benchagi path or Dock.
+BENCHAGI_APP_DIR="$STAGE" BENCHAGI_NO_CLI_PIN=1 BENCHAGI_SKIP_DOCK_PIN=1 bash "$SCRIPT_DIR/make-dock-app.sh"
 ln -s /Applications "$STAGE/Applications" # drag-target convenience in the dmg window
 
 mkdir -p "$OUT"
