@@ -179,6 +179,36 @@ await test("install.sh verifies both bench binaries", () => {
   assert.match(text, /command -v benchagi/);
 });
 
+await test("install.sh refreshes PATH with the installed package manager bin", () => {
+  const text = readFileSync(path.resolve(__dirname, "../scripts/install.sh"), "utf8");
+  assert.match(text, /global_bin_for_pm\(\)/);
+  assert.match(text, /Refreshing PATH for the installed CLI/);
+  assert.match(text, /PATH="\$GLOBAL_BIN:\$PATH"/);
+});
+
+await test("make-dock-app pins the invoking CLI before PATH fallback", () => {
+  const text = readFileSync(path.resolve(__dirname, "../scripts/make-dock-app.sh"), "utf8");
+  assert.match(text, /BENCHAGI_CLI_NODE/);
+  assert.match(text, /BENCHAGI_CLI_ENTRY/);
+  assert.match(text, /BENCHAGI_NO_CLI_PIN/);
+  assert.match(text, /exec "\\\$BENCHAGI_CLI_NODE" "\\\$BENCHAGI_CLI_ENTRY"/);
+  assert.match(text, /\\\$HOME\/\.local\/bin:\\\$HOME\/\.npm-global\/bin:\/opt\/homebrew\/bin/);
+});
+
+await test("build-dmg creates a generic PATH-only launcher", () => {
+  const text = readFileSync(path.resolve(__dirname, "../scripts/build-dmg.sh"), "utf8");
+  assert.match(text, /BENCHAGI_NO_CLI_PIN=1/);
+  assert.match(text, /BENCHAGI_SKIP_DOCK_PIN=1/);
+  assert.match(text, /make-dock-app\.sh/);
+});
+
+await test("install-app passes the current CLI entry to make-dock-app", () => {
+  const text = readFileSync(path.resolve(__dirname, "../src/v2/commands/install-app.ts"), "utf8");
+  assert.match(text, /currentCliEntry/);
+  assert.match(text, /BENCHAGI_CLI_NODE: process\.execPath/);
+  assert.match(text, /BENCHAGI_CLI_ENTRY: cliEntry/);
+});
+
 // --- BenchAGI seat: status line + attention notifications (the new feature) ---
 const ASSETS = path.resolve(__dirname, "../dist/v2/assets/.claude");
 

@@ -8,7 +8,7 @@ export type ModelEnv = "local-claude" | "local-codex" | "tunnel" | "direct";
 export interface ModelChoice {
   /** Picker label. */
   label: string;
-  /** Model id sent to the harness. undefined = "Default" (use the agent's assigned model). */
+  /** Model id sent to the harness. undefined = "Default" (resolves to DEFAULT_CLAUDE_MODEL for local Claude seats). */
   value?: string;
   /** Short name for status lines / roster. Defaults to `label`. */
   short?: string;
@@ -16,11 +16,17 @@ export interface ModelChoice {
   envs?: ModelEnv[];
 }
 
+// Standing default for local Claude CLI seats (Cory, 2026-06-30) — every
+// company agent launches on this unless the picker is used to choose
+// something else for that session. See seat.ts:runLocalClaudeSeat.
+export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-5";
+
 // The 1M-context Opus 4.8 is a Claude Code context profile (`[1m]`). The OpenClaw
 // gateway model catalog parses `@profile` suffixes, not `[…]` brackets, so it's a
 // LOCAL Claude option only — cloud/direct agents fall back to base claude-opus-4-8.
 export const CLAUDE_MODELS: ModelChoice[] = [
   { label: "Default", value: undefined },
+  { label: "Sonnet 5", value: "claude-sonnet-5" },
   { label: "Opus 4.8", value: "claude-opus-4-8" },
   { label: "Opus 4.8 (1M)", value: "claude-opus-4-8[1m]", short: "Opus 4.8·1M", envs: ["local-claude"] },
   { label: "Opus 4.6", value: "claude-opus-4-6" },

@@ -3,12 +3,15 @@
 # opens a terminal running `benchagi`: boot cinematic → agent selector → configure
 # Cloud, Direct, Claude, or Codex seat mode → launch.
 #
-# The app is SELF-CONTAINED (its launch command lives inside the bundle and resolves
-# `benchagi` on PATH at click time) so the same build works for: local install
-# (scripts/install.sh), the Homebrew cask, and the .dmg (scripts/build-dmg.sh).
+# The app pins the exact CLI that created it when BENCHAGI_CLI_NODE +
+# BENCHAGI_CLI_ENTRY are provided, then falls back to PATH. This keeps a stale
+# Homebrew formula from shadowing a newer npm/curl install in the Dock launcher.
 #
 # Idempotent + reversible:  rm -rf "$HOME/Applications/BenchAGI.app"
 # Env overrides: BENCHAGI_APP_DIR (default ~/Applications), BENCHAGI_ICON (default ../assets/benchagi-icon.png).
+# BENCHAGI_CLI_NODE + BENCHAGI_CLI_ENTRY pin the launcher to a specific CLI.
+# BENCHAGI_CLI_CMD pins a command path fallback when the JS entry cannot be used.
+# BENCHAGI_NO_CLI_PIN=1 builds a PATH-only launcher for generic DMG artifacts.
 # Set BENCHAGI_SKIP_DOCK_PIN=1 to build the app without pinning it to the Dock.
 set -euo pipefail
 
@@ -57,10 +60,37 @@ OSA
 /usr/bin/osacompile -o "$APP" "$tmp/b.applescript"
 rm -rf "$tmp"
 
-# 2) Embedded launch command — resolves benchagi on PATH at click time.
-cat > "$APP/Contents/Resources/launch.command" <<'LAUNCH'
+# 2) Embedded launch command — prefer the install-time CLI, then PATH fallbacks.
+shell_quote() {
+  printf '%q' "$1"
+}
+
+CLI_NODE="${BENCHAGI_CLI_NODE:-}"
+CLI_ENTRY="${BENCHAGI_CLI_ENTRY:-}"
+CLI_CMD="${BENCHAGI_CLI_CMD:-}"
+if [ "${BENCHAGI_NO_CLI_PIN:-0}" = "1" ]; then
+  CLI_NODE=""
+  CLI_ENTRY=""
+  CLI_CMD=""
+elif [ -z "$CLI_CMD" ] && command -v benchagi >/dev/null 2>&1; then
+  CLI_CMD="$(command -v benchagi)"
+fi
+
+cat > "$APP/Contents/Resources/launch.command" <<LAUNCH
 #!/usr/bin/env bash
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/usr/bin:/bin:$PATH"
+BENCHAGI_CLI_NODE=$(shell_quote "$CLI_NODE")
+BENCHAGI_CLI_ENTRY=$(shell_quote "$CLI_ENTRY")
+BENCHAGI_CLI_CMD=$(shell_quote "$CLI_CMD")
+
+if [ -n "\$BENCHAGI_CLI_NODE" ] && [ -x "\$BENCHAGI_CLI_NODE" ] && [ -n "\$BENCHAGI_CLI_ENTRY" ] && [ -f "\$BENCHAGI_CLI_ENTRY" ]; then
+  exec "\$BENCHAGI_CLI_NODE" "\$BENCHAGI_CLI_ENTRY"
+fi
+
+if [ -n "\$BENCHAGI_CLI_CMD" ] && [ -x "\$BENCHAGI_CLI_CMD" ]; then
+  exec "\$BENCHAGI_CLI_CMD"
+fi
+
+export PATH="\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
 if command -v benchagi >/dev/null 2>&1; then exec benchagi; fi
 echo "BenchAGI CLI isn't installed yet. Install it with:"
 echo "  brew install BenchAGI/tap/benchagi"

@@ -7,7 +7,7 @@
 #   * `bench`     — legacy v0.x wrapper around `openclaw` (deprecated alias)
 #
 # To publish a new version:
-#   1. Tag a release at https://github.com/BenchAGI/bench-cli (e.g. v1.0.0).
+#   1. Tag a release at https://github.com/BenchAGI/bench-cli (e.g. v1.0.0-beta.12).
 #   2. Update `url`, `version`, and `sha256` here.
 #   3. Place this file at https://github.com/BenchAGI/homebrew-tap/Formula/benchagi.rb
 #   4. Customers install via: `brew install BenchAGI/tap/benchagi`
@@ -20,10 +20,10 @@
 class Benchagi < Formula
   desc "BenchAGI CLI — streaming-aware terminal access to the OpenClaw agent system"
   homepage "https://github.com/BenchAGI/bench-cli"
-  url "https://github.com/BenchAGI/bench-cli/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
+  url "https://github.com/BenchAGI/bench-cli/archive/refs/tags/v1.0.0-beta.12.tar.gz"
+  sha256 "REPLACE_WITH_V1_0_0_BETA_12_TARBALL_SHA256"
   license "MIT"
-  version "1.0.0"
+  version "1.0.0-beta.12"
 
   depends_on "node"
 
@@ -49,8 +49,8 @@ class Benchagi < Formula
   end
 
   test do
-    assert_match "bench v",     shell_output("#{bin}/bench version")
-    assert_match "benchagi 1.", shell_output("#{bin}/benchagi version")
+    assert_match version.to_s, shell_output("#{bin}/bench version")
+    assert_match "benchagi #{version}", shell_output("#{bin}/benchagi version")
   end
 
   def caveats
