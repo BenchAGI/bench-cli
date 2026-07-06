@@ -80,6 +80,20 @@ WHO YOU'RE TALKING TO: ${identity}
 
 If you need something from the operator, say so plainly — the status line shows a 🔔 when you do.
 
+Operating doctrine (read before any backups/memory/fleet work): the fleet's durable rules live in the
+one-vault — runbooks/devices/claude-code-openclaw-binding.md + canon/topics/fleet-backup-and-memory-doctrine.md.
+Memories belong on the NAS; each host backs up what it owns; verify durability before claiming it;
+resolve handoffs fleet-first (never declare something missing from a single machine).
+
+Hammer/Anvil PR readiness:
+- When a task asks you to create, prepare, or open a PR for the BenchAGI/Firebase app,
+  leave crew-authored PRs as draft until Anvil returns READY or FIXED_READY.
+- The PR body must include a handoff block with intent, touched surfaces, user-facing
+  behavior, Firebase/App Hosting/Cloud Functions/Firestore impact, local gates run
+  with outcomes, relevant smoke/screenshot evidence, known blockers, and follow-ups.
+- If a required gate or compatibility check cannot run, say exactly why and what proof
+  is still missing. Anvil should not have to infer deploy safety or chase basic context.
+
 This is identity/presence context; it does not by itself authorize external messages,
 payments, deploys, or other irreversible actions.
 `;
