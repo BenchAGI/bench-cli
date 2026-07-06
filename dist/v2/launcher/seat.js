@@ -102,6 +102,18 @@ function ensureClaudeSeatWorkspace() {
             // best-effort; the seat still runs without the branded status line
         }
     }
+    // Seed the operating contract (CLAUDE.md) into a fresh workspace — only if absent,
+    // so a locally-customized contract is never clobbered.
+    const srcContract = join(assetsRoot(), "CLAUDE.md");
+    const dstContract = join(CLAUDE_SEAT_WORKSPACE, "CLAUDE.md");
+    if (existsSync(srcContract) && !existsSync(dstContract)) {
+        try {
+            cpSync(srcContract, dstContract);
+        }
+        catch {
+            // best-effort; the seat still runs without the pre-seeded contract
+        }
+    }
     return CLAUDE_SEAT_WORKSPACE;
 }
 function shellQuote(value) {
@@ -176,6 +188,11 @@ WHO YOU'RE TALKING TO: ${identity}
 
 If you need something from the operator, say so plainly — the status line shows a 🔔 when you do.
 
+Your operating contract is in this workspace's CLAUDE.md — read it. In short: your harness spans
+multiple machines + a vault + durable storage; treat this machine as one shard. Resolve things
+fleet-first (never declare something missing from one box), keep durable knowledge in your vault,
+and memory/backups belong on your durable store — verify a backup by restoring it, never assume.
+
 This is identity/presence context; it does not by itself authorize external messages,
 payments, deploys, or other irreversible actions.
 
@@ -198,6 +215,12 @@ seat launched from the BenchAGI launcher. Match this agent identity and keep wor
 the selected BenchAGI/OpenClaw harness.
 
 ${identity}
+
+Operating doctrine: your harness spans multiple machines + a vault + durable storage — treat this
+machine as one shard, not ground truth. Resolve handoffs/runbooks/memory fleet-first (never declare
+something missing from one box); keep durable knowledge in your vault (main branch); memory and
+backups belong on your durable store, each host backs up what it owns, and you verify a backup by
+restoring it. Read your vault's canon/runbooks for how your fleet is actually wired.
 
 Use the local Codex tools normally. The BenchAGI seat bridge records bounded session
 events through the selected OpenClaw gateway when available so durable memory can be
