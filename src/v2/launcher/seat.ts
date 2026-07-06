@@ -49,6 +49,17 @@ function ensureSeatWorkspace(): string {
       // best-effort; the seat still runs without the branded status line
     }
   }
+  // Seed the operating contract (CLAUDE.md) into a fresh workspace — only if absent,
+  // so a locally-customized contract is never clobbered.
+  const srcContract = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "CLAUDE.md");
+  const dstContract = join(SEAT_WORKSPACE, "CLAUDE.md");
+  if (existsSync(srcContract) && !existsSync(dstContract)) {
+    try {
+      cpSync(srcContract, dstContract);
+    } catch {
+      // best-effort; the seat still runs without the pre-seeded contract
+    }
+  }
   return SEAT_WORKSPACE;
 }
 
