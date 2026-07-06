@@ -34,4 +34,13 @@ async function copyTree(name) {
 
 const claudeFiles = await copyTree(".claude");
 const codexFiles = await copyTree(".codex");
-console.log(`copy-assets: ${n} asset(s) + ${claudeFiles} .claude file(s) + ${codexFiles} .codex file(s) -> dist/v2/assets/`);
+
+// The seat operating contract (CLAUDE.md) — seeded into new Claude seat workspaces.
+let contract = 0;
+try {
+  await copyFile(join(src, "CLAUDE.md"), join(dest, "CLAUDE.md"));
+  contract = 1;
+} catch {
+  // no CLAUDE.md asset -> skip
+}
+console.log(`copy-assets: ${n} asset(s) + ${claudeFiles} .claude file(s) + ${codexFiles} .codex file(s) + ${contract} contract -> dist/v2/assets/`);
