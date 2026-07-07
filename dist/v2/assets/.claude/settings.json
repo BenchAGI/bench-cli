@@ -18,7 +18,8 @@
     "UserPromptSubmit": [
       { "hooks": [
         { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/benchagi-attention.mjs\" clear" },
-        { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" user_prompt", "timeout": 10 }
+        { "type": "command", "command": "node \"$BENCHAGI_SEAT_HOOK\" user_prompt", "timeout": 10 },
+        { "type": "command", "command": "test -f \"$HOME/.openclaw/scripts/memory-recall-hook.mjs\" && node \"$HOME/.openclaw/scripts/memory-recall-hook.mjs\" || true", "timeout": 8 }
       ] }
     ],
     "PostToolUse": [

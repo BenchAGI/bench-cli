@@ -12,11 +12,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const claudeSettingsPath = join(repoRoot, "src", "v2", "assets", ".claude", "settings.json");
 
-type HookGroup = { hooks?: Array<{ command?: string }> };
+type HookEntry = { command?: string; timeout?: number };
+type HookGroup = { hooks?: HookEntry[] };
 
 function commandsFor(hooks: Record<string, HookGroup[]>, event: string): string[] {
+  return hookEntriesFor(hooks, event).map((h) => h.command ?? "");
+}
+
+function hookEntriesFor(hooks: Record<string, HookGroup[]>, event: string): HookEntry[] {
   const groups = hooks[event] ?? [];
-  return groups.flatMap((group) => (group.hooks ?? []).map((h) => h.command ?? ""));
+  return groups.flatMap((group) => group.hooks ?? []);
 }
 
 function assertSeatHookWired(
@@ -57,6 +62,22 @@ test("Claude seat settings wire the memory-guard hook into Stop + SessionStart",
       `expected ${event} to wire the memory-guard hook\n${JSON.stringify(commandsFor(hooks, event))}`,
     );
   }
+});
+
+test("Claude seat settings wire the memory-recall hook into UserPromptSubmit", () => {
+  const settings = JSON.parse(readFileSync(claudeSettingsPath, "utf8")) as {
+    hooks: Record<string, HookGroup[]>;
+  };
+  const match = hookEntriesFor(settings.hooks, "UserPromptSubmit").find((h) =>
+    h.command?.includes("memory-recall-hook.mjs"),
+  );
+  assert.ok(
+    match,
+    `expected UserPromptSubmit to wire the memory-recall hook\n${JSON.stringify(commandsFor(settings.hooks, "UserPromptSubmit"))}`,
+  );
+  assert.ok(match.command?.includes('test -f "$HOME/.openclaw/scripts/memory-recall-hook.mjs"'));
+  assert.ok(match.command?.includes("|| true"));
+  assert.equal(match.timeout, 8);
 });
 
 test("Codex seat hooks wire all four seat-bridge events", () => {
