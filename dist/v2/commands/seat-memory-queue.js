@@ -24,8 +24,19 @@ const MAX_ATTEMPTS = 8;
 const DEFAULT_HOOK_DRAIN_TIMEOUT_MS = 8_000;
 const DEFAULT_BACKFILL_TIMEOUT_MS = 120_000;
 // --- shared helpers ----------------------------------------------------------
+// Linear edge-trim; the `/^_+|_+$/`-style alternations here were flagged as
+// polynomial ReDoS (CodeQL js/polynomial-redos) on long runs of the trim char.
+function trimEdgeChars(value, chars) {
+    let start = 0;
+    let end = value.length;
+    while (start < end && chars.includes(value[start]))
+        start++;
+    while (end > start && chars.includes(value[end - 1]))
+        end--;
+    return value.slice(start, end);
+}
 export function safeSegment(value) {
-    return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+    return trimEdgeChars(value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_"), "_") || "unknown";
 }
 /** sha256 of normalized content — MUST match memory-core promote-file.contentHashOf. */
 export function contentHashOf(content) {
@@ -40,10 +51,7 @@ export function contentHashOf(content) {
 }
 function slugForSourceFile(filePath) {
     const base = basename(filePath).replace(/\.md$/i, "");
-    const slug = base
-        .toLowerCase()
-        .replace(/[^a-z0-9._-]+/g, "-")
-        .replace(/^[-.]+|[-.]+$/g, "")
+    const slug = trimEdgeChars(base.toLowerCase().replace(/[^a-z0-9._-]+/g, "-"), "-.")
         .slice(0, 120);
     return slug || "memory";
 }
