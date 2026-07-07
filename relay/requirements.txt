@@ -7,4 +7,4 @@
 firebase-admin==6.5.0           # Firestore Admin SDK + auth init
 google-cloud-firestore==2.16.0  # Pulled in transitively; pinned for safety
 httpx==0.27.0                   # HTTP + SSE streaming to OpenClaw gateway
-python-dotenv==1.0.1            # .env loading for local dev
+python-dotenv==1.2.2            # .env loading for local dev (1.2.2 fixes set_key symlink-follow advisory)

@@ -9,7 +9,7 @@ const HELP = `bench tail [options]
 Live-tail the gateway log stream with friendly formatting.
 
 Options:
-  --filter <regex>   Only show lines matching this case-insensitive regex
+  --filter <text>    Only show lines containing this text (case-insensitive)
   --agent <id>       Filter to a single agent id
   --level <name>     Minimum level (debug|info|warn|error|fatal)
   --raw              Print the underlying JSON line as-is
@@ -134,10 +134,8 @@ function formatShortTime(ts) {
   );
 }
 
+// Literal (escaped) match only — feeding the raw arg to RegExp lets a
+// crafted pattern wedge the tail loop (CodeQL js/regex-injection).
 function safeRegex(s) {
-  try {
-    return new RegExp(s, "i");
-  } catch {
-    return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-  }
+  return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
