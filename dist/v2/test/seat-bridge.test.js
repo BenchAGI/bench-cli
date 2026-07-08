@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { buildSeatCaptureFromEnv, buildSeatSystemEventText, defaultWakeForEvent, extractHookCaptureText, normalizeSeatEvent, } from "../commands/seat-bridge.js";
+import { buildSeatCaptureFromEnv, buildSeatSystemEventText, defaultWakeForEvent, extractHookCaptureText, hookSessionId, normalizeSeatEvent, } from "../commands/seat-bridge.js";
 import { buildCodexLaunchArgs, codexProjectTrustConfig, } from "../launcher/seat.js";
 test("seat bridge extracts prompt text from JSON hook payloads", () => {
     const extracted = extractHookCaptureText(JSON.stringify({ prompt: "review the launch" }), "user_prompt");
@@ -58,4 +58,48 @@ test("seat bridge formats fallback system events without raw transcript flood", 
         text: "review the launcher bridge",
         ts: "2026-06-12T00:00:00.000Z",
     }), "Local Claude Code seat capture | agent=aurelius | event=user_prompt | summary=review the launcher bridge");
+});
+// The test process may itself run inside a seat, so pin the env per test.
+function withSeatSessionEnv(value, fn) {
+    const prior = process.env.BENCHAGI_SEAT_SESSION_ID;
+    if (value === undefined)
+        delete process.env.BENCHAGI_SEAT_SESSION_ID;
+    else
+        process.env.BENCHAGI_SEAT_SESSION_ID = value;
+    try {
+        return fn();
+    }
+    finally {
+        if (prior === undefined)
+            delete process.env.BENCHAGI_SEAT_SESSION_ID;
+        else
+            process.env.BENCHAGI_SEAT_SESSION_ID = prior;
+    }
+}
+test("capture keeps the launcher session id authoritative over the hook payload's", () => {
+    const capture = withSeatSessionEnv("launcher-id", () => buildSeatCaptureFromEnv({
+        event: "user_prompt",
+        rawHookPayload: JSON.stringify({ session_id: "claude-id", prompt: "hi" }),
+    }));
+    assert.equal(capture.seatSessionId, "launcher-id");
+});
+test("capture falls back to Claude's session_id from the hook payload", () => {
+    const capture = withSeatSessionEnv(undefined, () => buildSeatCaptureFromEnv({
+        event: "user_prompt",
+        rawHookPayload: JSON.stringify({ session_id: "claude-window-1", prompt: "hi" }),
+    }));
+    assert.equal(capture.seatSessionId, "claude-window-1");
+});
+test("capture mints per-invocation ids only when no launcher env and no payload id", () => {
+    const [first, second] = withSeatSessionEnv(undefined, () => [
+        buildSeatCaptureFromEnv({ event: "tool_result", rawHookPayload: "{}" }),
+        buildSeatCaptureFromEnv({ event: "tool_result", rawHookPayload: "{}" }),
+    ]);
+    assert.match(first.seatSessionId, /^[0-9a-f-]{36}$/);
+    assert.notEqual(first.seatSessionId, second.seatSessionId);
+});
+test("hookSessionId reads nested payload shapes and ignores non-JSON", () => {
+    assert.equal(hookSessionId(JSON.stringify({ data: { session_id: "nested-1" } })), "nested-1");
+    assert.equal(hookSessionId("plain text, not json"), undefined);
+    assert.equal(hookSessionId(undefined), undefined);
 });

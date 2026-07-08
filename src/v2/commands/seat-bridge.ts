@@ -140,6 +140,16 @@ function parseHookPayload(raw: string): unknown {
   }
 }
 
+// A desktop (non-spawn) launch has no launcher-minted BENCHAGI_SEAT_SESSION_ID,
+// but Claude Code sends its own session_id in every hook payload — use it so a
+// window's events land in one seat session instead of scattering one per hook.
+// No cached fallback on purpose: a workspace-level cache can't tell concurrent
+// windows apart, so per-invocation minting stays the honest last resort.
+export function hookSessionId(rawHookPayload?: string): string | undefined {
+  if (!rawHookPayload) return undefined;
+  return readHookValue(parseHookPayload(rawHookPayload), ["session_id", "sessionId"]);
+}
+
 export function extractHookCaptureText(raw: string, event: SeatEvent): {
   summary?: string;
   text?: string;
@@ -226,7 +236,10 @@ export function buildSeatCaptureFromEnv(args: {
     process.env.BENCHAGI_SEAT_AGENT_ID?.trim() ||
     process.env.BENCH_AGENT_ID?.trim() ||
     "main";
-  const seatSessionId = process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || randomUUID();
+  const seatSessionId =
+    process.env.BENCHAGI_SEAT_SESSION_ID?.trim() ||
+    hookSessionId(args.rawHookPayload) ||
+    randomUUID();
   return {
     agentId,
     seatKind: normalizeSeatKind(process.env.BENCHAGI_SEAT_KIND),
@@ -327,13 +340,13 @@ export async function persistAndPostSeatCapture(
   return { localPath, posted };
 }
 
-function seatMemoryContextFromEnv(): SeatMemoryContext {
+function seatMemoryContextFromEnv(rawHookPayload?: string): SeatMemoryContext {
   const agentId =
     process.env.BENCHAGI_SEAT_AGENT_ID?.trim() || process.env.BENCH_AGENT_ID?.trim() || "main";
   return {
     agentId,
     seatKind: process.env.BENCHAGI_SEAT_KIND?.trim() || undefined,
-    seatSessionId: process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || undefined,
+    seatSessionId: process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || hookSessionId(rawHookPayload),
   };
 }
 
@@ -366,7 +379,7 @@ function parseStringFlag(args: string[], name: string): string | undefined {
 // queue + retry, not in any single hook's timeout budget.
 function handleSeatMemoryForEvent(event: SeatEvent, rawHookPayload: string): void {
   try {
-    const ctx = seatMemoryContextFromEnv();
+    const ctx = seatMemoryContextFromEnv(rawHookPayload);
     if (event === "tool_result") {
       const hit = detectSeatMemoryWrite(rawHookPayload);
       if (hit) {
