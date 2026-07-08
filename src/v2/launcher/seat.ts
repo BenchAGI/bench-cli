@@ -218,6 +218,42 @@ export function writeSeatSettingsEnv(workspace: string, staticEnv: Record<string
   writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 
+// The last agent baked into the workspace settings — what a dock-app click
+// should re-seat when no agent is named explicitly.
+export function readSeatSettingsAgentId(workspace: string = CLAUDE_SEAT_WORKSPACE): string | undefined {
+  try {
+    const file = join(workspace, ".claude", "settings.local.json");
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { env?: Record<string, unknown> };
+    const id = parsed.env?.BENCHAGI_SEAT_AGENT_ID;
+    return typeof id === "string" && id.trim() ? id.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function desktopSeatDeepLink(workspace: string): string {
+  return `claude://code/new?folder=${encodeURIComponent(workspace)}`;
+}
+
+// Provision the seat workspace for a launcher-less session — the Claude Code
+// desktop app opening the folder via the claude:// deep link. There is no spawn
+// env: the settings.local.json env block written here is the session's only
+// carrier, and its own hooks record events (grouped by Claude's session_id).
+export function provisionDesktopClaudeSeat(
+  agent: LauncherAgent,
+  opts: { gatewayUrl?: string } = {},
+): { workspace: string; deepLink: string } {
+  const gatewayUrl = resolveSeatGatewayUrl(opts.gatewayUrl);
+  const staticEnv = staticSeatEnv({
+    agent,
+    seatKind: "claude-code",
+    gatewayUrl,
+    workspace: CLAUDE_SEAT_WORKSPACE,
+  });
+  const workspace = ensureClaudeSeatWorkspace(staticEnv);
+  return { workspace, deepLink: desktopSeatDeepLink(workspace) };
+}
+
 export function bridgeEnv(params: {
   staticEnv: Record<string, string>;
   agent: LauncherAgent;

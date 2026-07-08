@@ -38,25 +38,28 @@ function runScript(path, env) {
         child.once("close", (code) => resolve(code ?? 1));
     });
 }
-export async function commandInstallApp() {
+export async function commandInstallApp(positional = [], agent) {
     if (process.platform !== "darwin") {
         eprintln("benchagi install-app is macOS-only. The terminal CLI is already installed.");
         return;
     }
+    const desktop = positional[0] === "desktop";
     const root = packageRoot();
-    const script = join(root, "scripts", "make-dock-app.sh");
+    const script = join(root, "scripts", desktop ? "make-desktop-app.sh" : "make-dock-app.sh");
     if (!(await fileExists(script))) {
         eprintln(`Dock app helper not found: ${script}`);
         process.exit(1);
     }
     const cliEntry = await currentCliEntry(root);
+    const agentId = agent?.trim();
     const code = await runScript(script, {
         ...process.env,
         BENCHAGI_CLI_NODE: process.execPath,
         ...(cliEntry ? { BENCHAGI_CLI_ENTRY: cliEntry } : {}),
+        ...(desktop && agentId ? { BENCHAGI_DESKTOP_AGENT: agentId } : {}),
     });
     if (code !== 0) {
         process.exit(code);
     }
-    println("BenchAGI Dock app is installed.");
+    println(desktop ? "Claude Code desktop-seat dock app is installed." : "BenchAGI Dock app is installed.");
 }
