@@ -34,6 +34,20 @@ import type { LauncherAgent } from "./roster.js";
 const SEAT_DIR = join(homedir(), ".config", "benchagi", "seats");
 const CLAUDE_SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "seat-workspace");
 const CODEX_SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "codex-seat-workspace");
+const MANAGED_SEAT_SETTINGS_ENV_KEYS = new Set([
+  "BENCHAGI_BIN",
+  "BENCHAGI_SEAT_AGENT_ID",
+  "BENCHAGI_SEAT_AGENT_NAME",
+  "BENCHAGI_SEAT_CWD",
+  "BENCHAGI_SEAT_GATEWAY_URL",
+  "BENCHAGI_SEAT_HOOK",
+  "BENCHAGI_OPENCLAW_BIN",
+  "BENCHAGI_SEAT_KIND",
+  "BENCH_AGENT_ID",
+  "BENCH_AGENT_NAME",
+  "BENCH_AGENT_ROLE",
+  "BENCH_AGENT_EMOJI",
+]);
 
 export type LocalSeatOpts = {
   gatewayUrl?: string;
@@ -213,8 +227,12 @@ export function writeSeatSettingsEnv(workspace: string, staticEnv: Record<string
     existing.env && typeof existing.env === "object" && !Array.isArray(existing.env)
       ? (existing.env as Record<string, unknown>)
       : {};
+  const nextEnv = { ...priorEnv };
+  for (const key of MANAGED_SEAT_SETTINGS_ENV_KEYS) {
+    delete nextEnv[key];
+  }
   mkdirSync(claudeDir, { recursive: true });
-  const merged = { ...existing, env: { ...priorEnv, ...staticEnv } };
+  const merged = { ...existing, env: { ...nextEnv, ...staticEnv } };
   writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 

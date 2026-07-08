@@ -23,6 +23,20 @@ import { DEFAULT_CLAUDE_MODEL, shortModel } from "./models.js";
 const SEAT_DIR = join(homedir(), ".config", "benchagi", "seats");
 const CLAUDE_SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "seat-workspace");
 const CODEX_SEAT_WORKSPACE = join(homedir(), ".config", "benchagi", "codex-seat-workspace");
+const MANAGED_SEAT_SETTINGS_ENV_KEYS = new Set([
+    "BENCHAGI_BIN",
+    "BENCHAGI_SEAT_AGENT_ID",
+    "BENCHAGI_SEAT_AGENT_NAME",
+    "BENCHAGI_SEAT_CWD",
+    "BENCHAGI_SEAT_GATEWAY_URL",
+    "BENCHAGI_SEAT_HOOK",
+    "BENCHAGI_OPENCLAW_BIN",
+    "BENCHAGI_SEAT_KIND",
+    "BENCH_AGENT_ID",
+    "BENCH_AGENT_NAME",
+    "BENCH_AGENT_ROLE",
+    "BENCH_AGENT_EMOJI",
+]);
 function resolveClaude() {
     const candidates = [join(homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"];
     for (const p of candidates)
@@ -189,8 +203,12 @@ export function writeSeatSettingsEnv(workspace, staticEnv) {
     const priorEnv = existing.env && typeof existing.env === "object" && !Array.isArray(existing.env)
         ? existing.env
         : {};
+    const nextEnv = { ...priorEnv };
+    for (const key of MANAGED_SEAT_SETTINGS_ENV_KEYS) {
+        delete nextEnv[key];
+    }
     mkdirSync(claudeDir, { recursive: true });
-    const merged = { ...existing, env: { ...priorEnv, ...staticEnv } };
+    const merged = { ...existing, env: { ...nextEnv, ...staticEnv } };
     writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 export function bridgeEnv(params) {

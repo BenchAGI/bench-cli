@@ -87,6 +87,28 @@ test("writeSeatSettingsEnv merges: foreign settings and env keys survive, ours u
     assert.equal(written.env.MY_CUSTOM, "keep-me");
     assert.equal(written.env.BENCHAGI_SEAT_GATEWAY_URL, "http://127.0.0.1:18789");
 });
+test("writeSeatSettingsEnv removes stale managed keys that are absent from the fresh static env", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "seat-settings-test-"));
+    const claudeDir = join(workspace, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+    const staticEnv = makeStaticEnv();
+    delete staticEnv.BENCH_AGENT_ROLE;
+    delete staticEnv.BENCHAGI_OPENCLAW_BIN;
+    writeFileSync(join(claudeDir, "settings.local.json"), JSON.stringify({
+        env: {
+            MY_CUSTOM: "keep-me",
+            BENCH_AGENT_ROLE: "old role",
+            BENCHAGI_OPENCLAW_BIN: "/old/openclaw",
+            BENCHAGI_SEAT_GATEWAY_URL: "http://old:1",
+        },
+    }), "utf8");
+    writeSeatSettingsEnv(workspace, staticEnv);
+    const written = JSON.parse(readFileSync(join(claudeDir, "settings.local.json"), "utf8"));
+    assert.equal(written.env.MY_CUSTOM, "keep-me");
+    assert.equal(written.env.BENCHAGI_SEAT_GATEWAY_URL, "http://127.0.0.1:18789");
+    assert.ok(!("BENCH_AGENT_ROLE" in written.env));
+    assert.ok(!("BENCHAGI_OPENCLAW_BIN" in written.env));
+});
 test("writeSeatSettingsEnv leaves an unparseable settings.local.json untouched", () => {
     const workspace = mkdtempSync(join(tmpdir(), "seat-settings-test-"));
     const claudeDir = join(workspace, ".claude");
