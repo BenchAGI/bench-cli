@@ -92,6 +92,16 @@ function parseHookPayload(raw) {
         return trimmed;
     }
 }
+// A desktop (non-spawn) launch has no launcher-minted BENCHAGI_SEAT_SESSION_ID,
+// but Claude Code sends its own session_id in every hook payload — use it so a
+// window's events land in one seat session instead of scattering one per hook.
+// No cached fallback on purpose: a workspace-level cache can't tell concurrent
+// windows apart, so per-invocation minting stays the honest last resort.
+export function hookSessionId(rawHookPayload) {
+    if (!rawHookPayload)
+        return undefined;
+    return readHookValue(parseHookPayload(rawHookPayload), ["session_id", "sessionId"]);
+}
 export function extractHookCaptureText(raw, event) {
     const payload = parseHookPayload(raw);
     if (typeof payload === "string") {
@@ -170,7 +180,9 @@ export function buildSeatCaptureFromEnv(args) {
     const agentId = process.env.BENCHAGI_SEAT_AGENT_ID?.trim() ||
         process.env.BENCH_AGENT_ID?.trim() ||
         "main";
-    const seatSessionId = process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || randomUUID();
+    const seatSessionId = process.env.BENCHAGI_SEAT_SESSION_ID?.trim() ||
+        hookSessionId(args.rawHookPayload) ||
+        randomUUID();
     return {
         agentId,
         seatKind: normalizeSeatKind(process.env.BENCHAGI_SEAT_KIND),
@@ -259,12 +271,12 @@ export async function persistAndPostSeatCapture(capture, opts = {}) {
     }
     return { localPath, posted };
 }
-function seatMemoryContextFromEnv() {
+function seatMemoryContextFromEnv(rawHookPayload) {
     const agentId = process.env.BENCHAGI_SEAT_AGENT_ID?.trim() || process.env.BENCH_AGENT_ID?.trim() || "main";
     return {
         agentId,
         seatKind: process.env.BENCHAGI_SEAT_KIND?.trim() || undefined,
-        seatSessionId: process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || undefined,
+        seatSessionId: process.env.BENCHAGI_SEAT_SESSION_ID?.trim() || hookSessionId(rawHookPayload),
     };
 }
 function parseAgentFlag(args) {
@@ -296,7 +308,7 @@ function parseStringFlag(args, name) {
 // queue + retry, not in any single hook's timeout budget.
 function handleSeatMemoryForEvent(event, rawHookPayload) {
     try {
-        const ctx = seatMemoryContextFromEnv();
+        const ctx = seatMemoryContextFromEnv(rawHookPayload);
         if (event === "tool_result") {
             const hit = detectSeatMemoryWrite(rawHookPayload);
             if (hit) {
