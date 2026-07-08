@@ -9,7 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,7 +112,7 @@ function assetsClaudeDir(): string {
 
 // Ensure the seat workspace has a fresh .claude/ so the status line + attention
 // hooks + output style activate. Returns the workspace dir (the seat's cwd).
-function ensureClaudeSeatWorkspace(): string {
+function ensureClaudeSeatWorkspace(staticEnv?: Record<string, string>): string {
   mkdirSync(join(CLAUDE_SEAT_WORKSPACE, "state"), { recursive: true });
   const srcClaude = assetsClaudeDir();
   if (existsSync(srcClaude)) {
@@ -133,6 +133,13 @@ function ensureClaudeSeatWorkspace(): string {
       // best-effort; the seat still runs without the pre-seeded contract
     }
   }
+  if (staticEnv) {
+    try {
+      writeSeatSettingsEnv(CLAUDE_SEAT_WORKSPACE, staticEnv);
+    } catch {
+      // best-effort; a spawned seat still carries the env in its launch environment
+    }
+  }
   return CLAUDE_SEAT_WORKSPACE;
 }
 
@@ -146,17 +153,18 @@ function resolveBenchagiBin(): string {
   return process.env.BENCHAGI_BIN || "benchagi";
 }
 
-function bridgeEnv(params: {
+// The launch-independent seat env: identical for every session in this
+// workspace. Derived once per launch and carried two ways — spread into the
+// spawn env (bridgeEnv) AND baked into .claude/settings.local.json — so a
+// launch that bypasses the launcher (the Claude Code desktop app opening the
+// workspace folder) boots the same seat, and the two paths can never disagree.
+export function staticSeatEnv(params: {
   agent: LauncherAgent;
   seatKind: SeatKind;
-  seatSessionId: string;
   gatewayUrl: string;
   workspace: string;
-  providerVersion?: string;
-  effort?: PickerEffort;
-  thinking?: ThinkingMode;
-}): NodeJS.ProcessEnv {
-  return {
+}): Record<string, string> {
+  const values: Record<string, string | undefined> = {
     BENCHAGI_BIN: resolveBenchagiBin(),
     BENCHAGI_SEAT_AGENT_ID: params.agent.agentId,
     BENCHAGI_SEAT_AGENT_NAME: params.agent.name,
@@ -167,6 +175,59 @@ function bridgeEnv(params: {
     // drain can find it later under launchd/Codex's minimal PATH.
     BENCHAGI_OPENCLAW_BIN: resolveOpenclawBin() ?? undefined,
     BENCHAGI_SEAT_KIND: params.seatKind,
+    // Status-line identity. BENCH_AGENT_MODEL_SHORT is intentionally NOT here —
+    // it's per-launch; the status line falls back to the live model name.
+    BENCH_AGENT_ID: params.agent.agentId,
+    BENCH_AGENT_NAME: params.agent.name,
+    BENCH_AGENT_ROLE: params.agent.role || undefined,
+    BENCH_AGENT_EMOJI: params.agent.emoji,
+  };
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value === "string" && value.length > 0) env[key] = value;
+  }
+  return env;
+}
+
+// Persist the static seat env into the workspace's .claude/settings.local.json
+// `env` block, which Claude Code exports to the session and its hooks — the
+// only channel that reaches a desktop (non-spawn) launch. settings.local.json
+// rather than settings.json because the packaged settings.json is re-copied
+// over on every launch, and Claude itself writes permission grants into
+// settings.local.json — so merge, never clobber: only our env keys are updated.
+export function writeSeatSettingsEnv(workspace: string, staticEnv: Record<string, string>): void {
+  const claudeDir = join(workspace, ".claude");
+  const file = join(claudeDir, "settings.local.json");
+  let existing: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      existing = parsed as Record<string, unknown>;
+    } catch {
+      // unparseable local settings are the operator's to fix — never clobber
+      return;
+    }
+  }
+  const priorEnv =
+    existing.env && typeof existing.env === "object" && !Array.isArray(existing.env)
+      ? (existing.env as Record<string, unknown>)
+      : {};
+  mkdirSync(claudeDir, { recursive: true });
+  const merged = { ...existing, env: { ...priorEnv, ...staticEnv } };
+  writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+}
+
+export function bridgeEnv(params: {
+  staticEnv: Record<string, string>;
+  agent: LauncherAgent;
+  seatSessionId: string;
+  providerVersion?: string;
+  effort?: PickerEffort;
+  thinking?: ThinkingMode;
+}): NodeJS.ProcessEnv {
+  return {
+    ...params.staticEnv,
     BENCHAGI_SEAT_SESSION_ID: params.seatSessionId,
     BENCHAGI_SEAT_PROVIDER_VERSION: params.providerVersion ?? params.agent.modelShort,
     BENCHAGI_SEAT_EFFORT: params.effort,
@@ -384,8 +445,14 @@ export async function runLocalClaudeSeat(agent: LauncherAgent, opts: LocalSeatOp
   const claudeBin = resolveClaude();
   const { user, verified } = await resolveSeatUser();
   const promptFile = writeAgentPrompt(agent, user, verified);
-  const workspace = ensureClaudeSeatWorkspace();
   const gatewayUrl = resolveSeatGatewayUrl(opts.gatewayUrl);
+  const staticEnv = staticSeatEnv({
+    agent,
+    seatKind: "claude-code",
+    gatewayUrl,
+    workspace: CLAUDE_SEAT_WORKSPACE,
+  });
+  const workspace = ensureClaudeSeatWorkspace(staticEnv);
   const seatSessionId = randomUUID();
   // Remote entitlements pin (`agent.model`) is intentionally NOT consulted here —
   // Sonnet 5 is the standing default for all local Claude CLI seats (Cory,
@@ -393,11 +460,9 @@ export async function runLocalClaudeSeat(agent: LauncherAgent, opts: LocalSeatOp
   const model = opts.model?.trim() || DEFAULT_CLAUDE_MODEL;
   const effort = seatEffort(opts.effort);
   const env = bridgeEnv({
+    staticEnv,
     agent,
-    seatKind: "claude-code",
     seatSessionId,
-    gatewayUrl,
-    workspace,
     providerVersion: model,
     effort: opts.effort,
     thinking: opts.thinking,
@@ -442,11 +507,7 @@ export async function runLocalClaudeSeat(agent: LauncherAgent, opts: LocalSeatOp
         env: {
           ...process.env,
           ...env,
-          BENCH_AGENT_ID: agent.agentId,
-          BENCH_AGENT_NAME: agent.name,
           BENCH_AGENT_MODEL_SHORT: shortModel(model),
-          BENCH_AGENT_ROLE: agent.role ?? "",
-          BENCH_AGENT_EMOJI: agent.emoji,
           CLAUDE_PROJECT_DIR: workspace,
           // The launch-time effort, incl. `ultracode` which the --effort flag rejects.
           CLAUDE_CODE_EFFORT_LEVEL: effort,
@@ -489,11 +550,9 @@ export async function runLocalCodexSeat(agent: LauncherAgent, opts: LocalSeatOpt
   const model = opts.model?.trim() || process.env.BENCHAGI_CODEX_MODEL?.trim();
   const effort = codexEffort(opts.effort);
   const env = bridgeEnv({
+    staticEnv: staticSeatEnv({ agent, seatKind: "codex-cli", gatewayUrl, workspace }),
     agent,
-    seatKind: "codex-cli",
     seatSessionId,
-    gatewayUrl,
-    workspace,
     providerVersion: model || agent.modelShort,
     effort: opts.effort,
     thinking: opts.thinking,
@@ -532,11 +591,7 @@ export async function runLocalCodexSeat(agent: LauncherAgent, opts: LocalSeatOpt
         env: {
           ...process.env,
           ...env,
-          BENCH_AGENT_ID: agent.agentId,
-          BENCH_AGENT_NAME: agent.name,
           BENCH_AGENT_MODEL_SHORT: agent.modelShort,
-          BENCH_AGENT_ROLE: agent.role ?? "",
-          BENCH_AGENT_EMOJI: agent.emoji,
         },
       });
     } catch (error) {
