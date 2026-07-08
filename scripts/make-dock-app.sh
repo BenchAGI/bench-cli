@@ -125,7 +125,9 @@ LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServic
 [ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
 
 if [ "${BENCHAGI_SKIP_DOCK_PIN:-0}" != "1" ]; then
-  APP_URL="file://$APP/"
+  # Percent-encode spaces: a raw space makes an invalid _CFURLString the Dock
+  # renders as "?" and later drops (BENCHAGI_APP_DIR may contain one).
+  APP_URL="file://${APP// /%20}/"
   if ! /usr/bin/defaults read com.apple.dock persistent-apps 2>/dev/null | /usr/bin/grep -Fq "$APP_URL"; then
     /usr/bin/defaults write com.apple.dock persistent-apps -array-add \
       "{\"tile-data\"={\"file-data\"={\"_CFURLString\"=\"$APP_URL\"; \"_CFURLStringType\"=15;}; \"file-label\"=\"BenchAGI\";}; \"tile-type\"=\"file-tile\";}"
