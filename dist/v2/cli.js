@@ -4,6 +4,7 @@ import { commandAgentsList, commandAgentsUse } from "./commands/agents.js";
 import { commandAuthLogin, commandAuthLogout, commandAuthStatus } from "./commands/auth.js";
 import { commandLink } from "./commands/link.js";
 import { commandDoctor } from "./commands/doctor.js";
+import { commandDesktop } from "./commands/desktop.js";
 import { commandInstallApp } from "./commands/install-app.js";
 import { commandSeatBridge } from "./commands/seat-bridge.js";
 import { commandVersion, CLI_VERSION } from "./commands/version.js";
@@ -26,7 +27,10 @@ export async function run(argv) {
             await commandDoctor({ report: parsed.report, attachPath: parsed.attachPath });
             return;
         case "install-app":
-            await commandInstallApp();
+            await commandInstallApp(parsed.positional, parsed.agent);
+            return;
+        case "desktop":
+            await commandDesktop(parsed.agent, parsed.gatewayUrl);
             return;
         case "auth":
             await runAuth(parsed.positional);
@@ -219,6 +223,7 @@ function parseArgs(argv) {
                 arg === "relink" ||
                 arg === "agents" ||
                 arg === "doctor" ||
+                arg === "desktop" ||
                 arg === "install-app" ||
                 arg === "seat-bridge" ||
                 arg === "version" ||
@@ -255,7 +260,10 @@ Usage:
 
   benchagi doctor                  diagnostics (+ gateway log locations)
   benchagi doctor --report         file the diagnostics on the BenchAGI Forge
+  benchagi desktop                 open the Claude Code desktop app as your seat
+  benchagi desktop --agent <name>  desktop seat for a specific agent
   benchagi install-app             install/refresh the macOS Dock launcher app
+  benchagi install-app desktop     install the dock app that opens the desktop seat
   benchagi version                 print version
 
 Flags:
