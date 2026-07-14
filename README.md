@@ -9,9 +9,9 @@ This package ships **three binaries** from one install:
   tenant federation forwards a fresh Firebase human token to loopback in a
   dedicated request header without copying it into CLI state, receipts, or traces;
   a lost tenant sidecar can fall back only to authenticated control-plane reads,
-  with chat, proposals, approvals, and effects locked. Direct Grok ACP remains
-  available only as the explicitly named operator diagnostic
-  `excalibur legacy-grok-acp`. There is no alias cutover in this preview.
+  with chat, proposals, approvals, and effects locked. Grok chat is sidecar-only;
+  the CLI has no direct provider ACP launch path. There is no alias cutover in
+  this preview.
   **Use this as the beta preview landing surface.**
 
 - **`benchagi`** (1.x compatibility surface) — streaming-aware terminal client. Connects
@@ -38,7 +38,6 @@ excalibur ask "summarize this"    # single turn
 excalibur context list           # local + exact bound instance only
 excalibur sessions               # explicit scoped resume IDs
 excalibur providers status       # sidecar + cloud-read posture
-excalibur legacy-grok-acp        # explicit operator diagnostic only
 excalibur doctor                 # state modes, boundaries, and PATH shadows
 ```
 

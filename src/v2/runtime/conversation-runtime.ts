@@ -9,7 +9,7 @@ export type RunCompletion = "final" | "aborted" | "error" | "timeout";
  * on this interface rather than a provider or transport implementation.
  *
  * ChatRunner implements it for OpenClaw. Excalibur implements it over the
- * desktop-owned loopback HTTP/SSE sidecar; direct provider ACP is diagnostic.
+ * desktop-owned loopback HTTP/SSE sidecar. Direct provider ACP is not exposed.
  */
 export interface ConversationRuntime {
   connect(): Promise<void>;

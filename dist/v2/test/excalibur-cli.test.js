@@ -14,10 +14,10 @@ test("Excalibur parses private trace and classic surface flags", () => {
     assert.equal(parsed.command, "ask");
     assert.deepEqual(parsed.positional, ["hello"]);
 });
-test("Excalibur names the legacy ACP diagnostic explicitly and parses only loopback sidecar overrides", () => {
+test("Excalibur does not recognize the legacy direct ACP command and parses only loopback sidecar overrides", () => {
     const diagnostic = __testing.parseArgs(["legacy-grok-acp", "ping"]);
-    assert.equal(diagnostic.command, "legacy-grok-acp");
-    assert.deepEqual(diagnostic.positional, ["ping"]);
+    assert.equal(diagnostic.command, null);
+    assert.deepEqual(diagnostic.positional, ["legacy-grok-acp", "ping"]);
     const sidecar = __testing.parseArgs(["--sidecar=http://127.0.0.1:4178", "ask", "hello"]);
     assert.equal(sidecar.sidecarUrl, "http://127.0.0.1:4178");
     assert.throws(() => __testing.parseArgs(["--gateway", "ws://127.0.0.1:18789"]), /unknown option/);

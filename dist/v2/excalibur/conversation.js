@@ -3,8 +3,6 @@ import { replLoop, runTuiSeat, singleTurn } from "../launcher/cloud-seat.js";
 import { loadAccount, resolveApiBase } from "../launcher/account.js";
 import { resolveEntitledAgents } from "../launcher/entitlements.js";
 import { c, println } from "../render/ansi.js";
-import { GrokAcpRuntime } from "./grok-acp-runtime.js";
-import { inspectGrokProvider } from "./grok-managed.js";
 import { ExcaliburEffectsLockedError, ExcaliburHttpTransport, ExcaliburTransportError, } from "./http-transport.js";
 import { loadExcaliburState, recordReceipt, } from "./scoped-state.js";
 import { ExcaliburSidecarRuntime } from "./sidecar-runtime.js";
@@ -91,7 +89,7 @@ export async function runExcaliburConversation(opts) {
         throw Object.assign(new Error("cloud read-only state has no resumable conversation; restore the shared sidecar"), { exitCode: 13 });
     }
     if (opts.resume?.provider === "grok-acp") {
-        throw Object.assign(new Error("direct Grok ACP sessions are legacy diagnostics; use `excalibur legacy-grok-acp` explicitly"), { exitCode: 13 });
+        throw Object.assign(new Error("direct Grok ACP sessions are disabled; restore the shared Excalibur sidecar"), { exitCode: 13 });
     }
     const runtime = new ExcaliburSidecarRuntime({
         env: opts.env,
@@ -135,33 +133,6 @@ export async function runExcaliburConversation(opts) {
         // Detach only. The sidecar-owned conversation remains active so Desktop and
         // the next CLI invocation retain the exact same scoped conversation id.
         await runtime.close();
-    }
-}
-/** Explicit operator-only diagnostic. Never used as the canonical path. */
-export async function runLegacyGrokAcpDiagnostic(opts) {
-    if (opts.contextId !== "operator-local") {
-        throw Object.assign(new Error("legacy Grok ACP diagnostic is forbidden in tenant scope"), { exitCode: 13 });
-    }
-    const inspection = await inspectGrokProvider({ env: opts.env, scope: opts.scope });
-    if (!inspection.ready) {
-        throw Object.assign(new Error(inspection.issue || "legacy Grok ACP preflight failed"), { exitCode: 6 });
-    }
-    println(c.yellow("legacy diagnostic: direct Grok ACP is isolated from the shared Excalibur conversation"));
-    const runtime = new GrokAcpRuntime({
-        env: opts.env,
-        scope: opts.scope,
-        model: inspection.model,
-        contextId: "operator-local",
-        showFullToolOutput: opts.full,
-        showThinking: !opts.noThinking,
-        tui: shouldUseTui(opts),
-    });
-    try {
-        await runtime.connect();
-        await runConnected(runtime, { id: "grok", model: inspection.model }, opts, "legacy direct ACP diagnostic");
-    }
-    finally {
-        await runtime.close().catch(() => { });
     }
 }
 export async function currentConversationState(scope, env = process.env) {

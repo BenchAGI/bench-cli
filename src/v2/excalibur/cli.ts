@@ -12,10 +12,8 @@ import { resolveStateScope, scopeDirectory, type StateScope } from "../state/sco
 import {
   activateTenantCloudReadOnly,
   runExcaliburConversation,
-  runLegacyGrokAcpDiagnostic,
 } from "./conversation.js";
 import { renderCapabilities, renderReceiptPage, renderSnapshot } from "./control-render.js";
-import { inspectGrokProvider } from "./grok-managed.js";
 import { ExcaliburHttpTransport, resolveSidecarConnection } from "./http-transport.js";
 import {
   disableOperatorCalendar,
@@ -68,7 +66,6 @@ const COMMANDS = new Set([
   "providers",
   "memory",
   "calendar",
-  "legacy-grok-acp",
   "auth",
   "doctor",
   "version",
@@ -128,21 +125,6 @@ export async function runExcalibur(argv: string[]): Promise<void> {
       return;
     case "calendar":
       await runCalendar(parsed.positional, state, env);
-      return;
-    case "legacy-grok-acp":
-      if (state.selectedContext !== "operator-local") {
-        throw Object.assign(new Error("legacy Grok ACP diagnostic is forbidden while a tenant context is selected"), { exitCode: 13 });
-      }
-      await runLegacyGrokAcpDiagnostic({
-        env,
-        scope,
-        contextId: "operator-local",
-        message: parsed.positional.join(" ").trim() || undefined,
-        classic: parsed.classic,
-        full: parsed.full,
-        noThinking: parsed.noThinking,
-        traceFramesPath: parsed.traceFramesPath,
-      });
       return;
     case "doctor":
       await runDoctor(parsed, scope, state, env);
@@ -327,10 +309,9 @@ async function resolveControlReadTransport(
 }
 
 async function printSeats(scope: StateScope, env: NodeJS.ProcessEnv): Promise<void> {
-  const grok = await inspectGrokProvider({ env, scope });
   println(c.bold("Inference seats"));
   println(`  ${c.green("canonical")} shared Excalibur sidecar  ${c.dim("desktop-owned conversation and ordered event ledger")}`);
-  println(`  ${grok.ready ? c.yellow("diagnostic") : c.dim("unavailable")} direct Grok ACP  ${c.dim(grok.version || grok.issue || "not found")}`);
+  println(`  ${c.green("enforced")} Grok ACP via sidecar only  ${c.dim("direct provider launch is disabled")}`);
   try {
     const firebaseToken = await loadFreshFirebaseIdToken().catch(() => null);
     const entitled = await resolveEntitledAgents({ env, scope, firebaseToken });
@@ -360,8 +341,7 @@ async function runProviders(args: string[], scope: StateScope, env: NodeJS.Proce
   } catch (error) {
     println(`  Shared sidecar: ${c.red("blocked")} · ${(error as Error).message}`);
   }
-  const grok = await inspectGrokProvider({ env, scope });
-  println(`  Direct Grok ACP diagnostic: ${grok.ready ? c.yellow("ready") : c.dim("unavailable")} · ${grok.model}${grok.version ? ` · ${grok.version}` : ""}`);
+  println(`  Grok ACP routing: ${c.green("sidecar only")} · direct provider launch disabled`);
   try {
     const firebaseToken = await loadFreshFirebaseIdToken().catch(() => null);
     const entitled = await resolveEntitledAgents({ env, scope, firebaseToken });
@@ -549,9 +529,7 @@ async function runDoctor(
     failed = true;
     println(c.red(`✗ shared Excalibur sidecar blocked: ${(error as Error).message}`));
   }
-  const grok = await inspectGrokProvider({ env, scope });
-  if (grok.ready) println(c.dim(`⊘ legacy direct Grok ACP diagnostic available (${grok.version}, ${grok.model})`));
-  else println(c.dim(`⊘ legacy direct Grok ACP diagnostic unavailable: ${grok.issue || "unknown"}`));
+  println(c.green("✓ direct Grok ACP launch disabled; all Grok chat is sidecar-owned"));
 
   const mode = await stateFileMode({ scope, env });
   if (mode === 0o600) println(c.green(`✓ scoped state private (0600)`));
@@ -684,7 +662,6 @@ Usage:
   excalibur calendar status         private operator calendar adapter status
   excalibur calendar configure ...  consent to operator-thread schedule summaries
   excalibur calendar disable        disable the operator calendar adapter
-  excalibur legacy-grok-acp [text]  operator-only direct ACP diagnostic
   excalibur auth <login|logout|status>
   excalibur doctor                  provider, state, entitlement, and PATH checks
   excalibur version
@@ -700,7 +677,7 @@ Flags:
 Safety:
   The desktop-owned loopback sidecar owns Grok and the canonical conversation.
   Tenant sidecar loss permits authenticated reads only; chat, proposals,
-  approvals, and effects lock. Direct Grok ACP is an explicit operator diagnostic.
+  approvals, and effects lock. Direct Grok ACP launch is disabled.
   Calendar and memory configuration are 0600 operator-only state. The CLI never
   calls gog; account, calendar, and shelf identifiers are never printed by status.
 

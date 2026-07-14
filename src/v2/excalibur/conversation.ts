@@ -5,8 +5,6 @@ import { resolveEntitledAgents } from "../launcher/entitlements.js";
 import { c, println } from "../render/ansi.js";
 import type { ConversationRuntime } from "../runtime/conversation-runtime.js";
 import type { StateScope } from "../state/scope.js";
-import { GrokAcpRuntime } from "./grok-acp-runtime.js";
-import { inspectGrokProvider } from "./grok-managed.js";
 import {
   ExcaliburEffectsLockedError,
   ExcaliburHttpTransport,
@@ -137,7 +135,7 @@ export async function runExcaliburConversation(opts: ExcaliburConversationOption
   }
   if (opts.resume?.provider === "grok-acp") {
     throw Object.assign(
-      new Error("direct Grok ACP sessions are legacy diagnostics; use `excalibur legacy-grok-acp` explicitly"),
+      new Error("direct Grok ACP sessions are disabled; restore the shared Excalibur sidecar"),
       { exitCode: 13 },
     );
   }
@@ -185,33 +183,6 @@ export async function runExcaliburConversation(opts: ExcaliburConversationOption
     // Detach only. The sidecar-owned conversation remains active so Desktop and
     // the next CLI invocation retain the exact same scoped conversation id.
     await runtime.close();
-  }
-}
-
-/** Explicit operator-only diagnostic. Never used as the canonical path. */
-export async function runLegacyGrokAcpDiagnostic(opts: ExcaliburConversationOptions): Promise<void> {
-  if (opts.contextId !== "operator-local") {
-    throw Object.assign(new Error("legacy Grok ACP diagnostic is forbidden in tenant scope"), { exitCode: 13 });
-  }
-  const inspection = await inspectGrokProvider({ env: opts.env, scope: opts.scope });
-  if (!inspection.ready) {
-    throw Object.assign(new Error(inspection.issue || "legacy Grok ACP preflight failed"), { exitCode: 6 });
-  }
-  println(c.yellow("legacy diagnostic: direct Grok ACP is isolated from the shared Excalibur conversation"));
-  const runtime = new GrokAcpRuntime({
-    env: opts.env,
-    scope: opts.scope,
-    model: inspection.model,
-    contextId: "operator-local",
-    showFullToolOutput: opts.full,
-    showThinking: !opts.noThinking,
-    tui: shouldUseTui(opts),
-  });
-  try {
-    await runtime.connect();
-    await runConnected(runtime, { id: "grok", model: inspection.model }, opts, "legacy direct ACP diagnostic");
-  } finally {
-    await runtime.close().catch(() => {});
   }
 }
 

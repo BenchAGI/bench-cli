@@ -498,6 +498,27 @@ test("tenant sidecar loss degrades to authenticated cloud reads and performs no 
   assert.equal(persisted.includes("synthetic-sidecar-token"), false);
 });
 
+test("legacy direct ACP session records cannot bypass the shared sidecar", async () => {
+  await assert.rejects(
+    runExcaliburConversation({
+      scope: operatorScope,
+      contextId: "operator-local",
+      message: "hello",
+      resume: {
+        sessionId: "legacy-session",
+        provider: "grok-acp",
+        nativeSessionId: "legacy-native-session",
+        model: "grok-4.5",
+        contextId: "operator-local",
+        startedAt: NOW,
+        updatedAt: NOW,
+        status: "closed",
+      },
+    }),
+    /direct Grok ACP sessions are disabled/,
+  );
+});
+
 test("sidecar endpoints are exact numeric loopback origins", () => {
   assert.throws(() => new ExcaliburHttpTransport({
     baseUrl: "http://127.0.0.10:4178",
