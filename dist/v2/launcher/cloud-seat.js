@@ -12,6 +12,7 @@ import { loadAccount } from "./account.js";
 import { loadUserProfile, profileIsFresh } from "../state/user-profile.js";
 import { runTui } from "../tui/app.js";
 import { shortModel } from "./models.js";
+import { resolveEntitledAgents } from "./entitlements.js";
 // Branded ANSI for the cloud REPL status line (matches the local seat status line).
 const IR = "\x1b[38;2;255;45;85m";
 const COPPER = "\x1b[38;2;196;122;58m";
@@ -20,7 +21,14 @@ const SDIM = "\x1b[38;2;124;124;135m";
 const SRESET = "\x1b[0m";
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 export async function locateAgent(name, gatewayUrl) {
-    const agents = await listAgents(gatewayUrl);
+    const entitled = await resolveEntitledAgents();
+    const agents = entitled === null
+        ? await listAgents(gatewayUrl)
+        : entitled.filter((agent) => agent.active).map((agent) => ({
+            id: agent.agentId,
+            displayName: agent.name,
+            model: agent.model,
+        }));
     if (agents.length === 0) {
         throw Object.assign(new Error("no agents configured; check openclaw.json agents.list"), { exitCode: 5 });
     }
@@ -39,13 +47,13 @@ export async function locateAgent(name, gatewayUrl) {
     }
     return { id: resolved.id, model: resolved.model };
 }
-export async function singleTurn(runner, message) {
+export async function singleTurn(runner, message, surfaceLabel = "benchagi") {
     const runId = await runner.sendMessage(message);
     if (!runId)
         return;
     const reason = await runner.waitForFinal(120_000, runId);
     if (reason === "timeout") {
-        println(c.dim("(timed out waiting for response — try the REPL: `benchagi`)"));
+        println(c.dim(`(timed out waiting for response — try the REPL: \`${surfaceLabel}\`)`));
     }
     println();
 }
@@ -60,7 +68,7 @@ export async function resolveSeatIdentity() {
     }
     return {};
 }
-export async function replLoop(runner, agentId, model) {
+export async function replLoop(runner, agentId, model, surfaceLabel = "benchagi", locationLabel = "cloud") {
     // Status line above the prompt each turn: the agent you're talking to, the
     // logged-in human + access tier, and a 🔔 when the agent is waiting on you.
     const ident = await resolveSeatIdentity();
@@ -73,11 +81,11 @@ export async function replLoop(runner, agentId, model) {
             parts.push(`${COPPER}${ms}${SRESET}`);
         if (who)
             parts.push(`${SDIM}you: ${who}${access ? ` · ${access}` : ""}${SRESET}`);
-        parts.push(`${SDIM}cloud · benchagi${SRESET}`);
+        parts.push(`${SDIM}${locationLabel} · ${surfaceLabel}${SRESET}`);
         const line = parts.join(`${SDIM} · ${SRESET}`);
         return runner.hasPendingApproval() ? `${AMBER}\x1b[1m🔔 needs you${SRESET}${SDIM}  ·  ${SRESET}${line}` : line;
     };
-    println(c.dim(`benchagi ${CLI_VERSION} · type /exit or Ctrl-D to quit`));
+    println(c.dim(`${surfaceLabel} ${CLI_VERSION} · type /exit or Ctrl-D to quit`));
     await new Promise((resolve) => {
         const repl = new Repl({ prompt: c.cyan("you> "), statusLine }, {
             onMessage: async (msg) => {
@@ -115,10 +123,10 @@ function shouldUseTui(opts) {
         return false;
     return Boolean(process.stdout.isTTY && process.stdin.isTTY);
 }
-async function runTuiSeat(runner, agent) {
+export async function runTuiSeat(runner, agent, surfaceLabel = "benchagi") {
     const ident = await resolveSeatIdentity();
     await runTui(runner, {
-        agentId: agent.id,
+        agentId: surfaceLabel === "excalibur" ? "excalibur" : agent.id,
         model: shortModel(agent.model),
         tier: ident.tierLevel ? { level: ident.tierLevel, color: ident.tierColor } : undefined,
         who: ident.who,

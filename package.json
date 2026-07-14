@@ -1,11 +1,12 @@
 {
   "name": "@benchagi/cli",
-  "version": "1.0.0-beta.13",
-  "description": "BenchAGI CLI — streaming-aware terminal access to the Bench/OpenClaw agent system. Includes the new `benchagi` binary (V2, native WebSocket streaming) and the legacy `bench` wrapper.",
+  "version": "1.0.0-beta.15",
+  "description": "Excalibur and BenchAGI CLI surfaces — shared loopback conversation preview, native WebSocket streaming, and legacy bench compatibility.",
   "type": "module",
   "bin": {
     "bench": "./bin/bench.mjs",
-    "benchagi": "./bin/benchagi.mjs"
+    "benchagi": "./bin/benchagi.mjs",
+    "excalibur": "./bin/excalibur.mjs"
   },
   "files": [
     "bin/",
@@ -26,9 +27,12 @@
     "test": "node test/smoke.mjs",
     "test:v2": "node --test dist/v2/**/*.test.js",
     "test:tui": "node scripts/tui-smoke.mjs",
-    "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs",
+    "test:package": "npm run build && node scripts/package-canary.mjs",
+    "contracts:generate": "node scripts/generate-excalibur-contract-baseline.mjs",
+    "contracts:check": "node scripts/generate-excalibur-contract-baseline.mjs --check",
+    "lint": "node --check bin/bench.mjs && node --check bin/benchagi.mjs && node --check bin/excalibur.mjs",
     "prepublishOnly": "npm run build",
-    "postinstall": "node -e \"console.log('\\n\\u2713 BenchAGI CLI installed. Run: benchagi (V2 streaming) — or the legacy back-compat \\'bench setup\\' readiness check.')\""
+    "postinstall": "node -e \"console.log('\\n\\u2713 CLI installed. excalibur is the canonical command in the beta.15 candidate; benchagi and bench remain unredirected 1.x compatibility commands. Desktop apps were not modified.')\""
   },
   "engines": {
     "node": ">=20.10"

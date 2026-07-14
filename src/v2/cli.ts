@@ -13,6 +13,10 @@ import { getProjectAgent, loadState } from "./state/state-file.js";
 import { runCloudSeat } from "./launcher/cloud-seat.js";
 import { runLaunch } from "./launcher/launch.js";
 import type { Liveness } from "./probe/capability.js";
+import { runExcalibur } from "./excalibur/cli.js";
+
+export type InvocationName = "benchagi" | "excalibur";
+export type RunOptions = { invocationName?: InvocationName };
 
 type Argv = {
   agent?: string;
@@ -29,8 +33,13 @@ type Argv = {
   command?: string;
 };
 
-export async function run(argv: string[]): Promise<void> {
+export async function run(argv: string[], opts: RunOptions = {}): Promise<void> {
   ensureCursorRestoredOnExit();
+
+  if (opts.invocationName === "excalibur") {
+    await runExcalibur(argv);
+    return;
+  }
 
   const parsed = parseArgs(argv);
 
@@ -310,7 +319,7 @@ Flags:
   --attach <path>          (doctor --report) include a runbook file in the report
   --gateway <ws-url>       default tunnel/harness gateway for chat/Enter mode
   --direct-gateway <ws-url> gateway used by launcher Direct mode
-  --trace-frames <path>    append raw gateway WS frames as JSONL
+  --trace-frames <path>    private, redacted, expiring diagnostic JSONL
   --help, --version
 `);
 }

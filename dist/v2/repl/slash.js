@@ -22,6 +22,24 @@ export const SLASH_COMMANDS = [
     },
     { name: "exit", aliases: ["quit"], summary: "Leave the chat" },
 ];
+// Generated-product parity commands. Their implementation is transport-neutral:
+// ExcaliburSidecarRuntime serves these through the same validated control reads
+// used by the top-level CLI commands.
+export const EXCALIBUR_SLASH_COMMANDS = [
+    { name: "pulse", summary: "Show the authoritative Pulse observation" },
+    { name: "decisions", summary: "Show approval and decision aggregates" },
+    { name: "forge", summary: "Show Forge observation and dispatch posture" },
+    { name: "comms", summary: "Show count-only communications and crew state" },
+    { name: "schedules", summary: "Show schedule aggregates" },
+    { name: "fleet", summary: "Show Fleet observation and authority posture" },
+    { name: "receipts", summary: "Show deterministic execution receipts" },
+    { name: "controls", summary: "Show capabilities and every blocking gate" },
+    { name: "system", summary: "Show protocol, manifest, and runtime status" },
+    { name: "context", summary: "Show the explicit operator or tenant context" },
+    { name: "seat", summary: "Show the attested conductor seat" },
+    { name: "route", summary: "Show the digest-pinned routing profile" },
+    { name: "memory", summary: "Show the current memory boundary" },
+];
 // Parse a line as a slash command. Returns null when the line is NOT a slash command:
 // it must start with `/` after optional leading whitespace. A bare "/" parses to name "".
 export function parseSlash(line) {

@@ -1,7 +1,7 @@
 // Slash-command parser + registry.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { SLASH_COMMANDS, parseSlash, findCommand, matchHint, renderHelp, buildRegistry, } from "../repl/slash.js";
+import { EXCALIBUR_SLASH_COMMANDS, SLASH_COMMANDS, parseSlash, findCommand, matchHint, renderHelp, buildRegistry, } from "../repl/slash.js";
 test("parseSlash returns null for non-slash input", () => {
     assert.equal(parseSlash("hello"), null);
     assert.equal(parseSlash(""), null);
@@ -76,4 +76,17 @@ test("buildRegistry appends extra commands", () => {
     const reg = buildRegistry([{ name: "debug", summary: "x" }]);
     assert.equal(findCommand("debug", reg)?.name, "debug");
     assert.equal(reg.length, SLASH_COMMANDS.length + 1);
+});
+test("Excalibur registry and help expose the complete aggregate parity surface", () => {
+    const registry = buildRegistry(EXCALIBUR_SLASH_COMMANDS);
+    const expected = [
+        "pulse", "decisions", "forge", "comms", "schedules", "fleet",
+        "receipts", "controls", "system", "context", "seat", "route", "memory",
+    ];
+    assert.deepEqual(EXCALIBUR_SLASH_COMMANDS.map((item) => item.name), expected);
+    const help = renderHelp(registry);
+    for (const name of [...expected, "status"]) {
+        assert.equal(findCommand(name, registry)?.name, name);
+        assert.match(help, new RegExp(`/${name}(?:\\s|$)`));
+    }
 });

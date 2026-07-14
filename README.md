@@ -1,23 +1,46 @@
-# BenchAGI CLI
+# Excalibur / BenchAGI CLI
 
-This package ships **two binaries** from one install:
+This package ships **three binaries** from one install:
 
-- **`benchagi`** (V2, since 1.0) — streaming-aware terminal client. Connects
+- **`excalibur`** (beta.15 candidate) — the canonical command and shared Desktop/CLI contact surface. It
+  attaches to the Excalibur app's authenticated numeric-loopback HTTP sidecar,
+  uses the same scoped conversation ID, and resumes its ordered SSE ledger from
+  the last accepted cursor. Operator and tenant identity are explicit headers;
+  tenant federation forwards a fresh Firebase human token to loopback in a
+  dedicated request header without copying it into CLI state, receipts, or traces;
+  a lost tenant sidecar can fall back only to authenticated control-plane reads,
+  with chat, proposals, approvals, and effects locked. Direct Grok ACP remains
+  available only as the explicitly named operator diagnostic
+  `excalibur legacy-grok-acp`. There is no alias cutover in this preview.
+  **Use this as the beta preview landing surface.**
+
+- **`benchagi`** (1.x compatibility surface) — streaming-aware terminal client. Connects
   to the local OpenClaw Gateway over WebSocket and renders the full event
   taxonomy: tool calls, assistant deltas, command output, patches, plans,
   approvals. Two-clock liveness indicator for batch backends so silence is
-  visible silence with a countdown, never a frozen process. **Use this for
-  daily interactive work.**
-- **`bench`** (deprecated back-compat alias, kept working) — thin shell-out
+  visible silence with a countdown, never a frozen process. **Use this for the
+  existing BenchAGI launcher and seat workflow.**
+- **`bench`** (1.x compatibility surface, kept working) — thin shell-out
   around `openclaw` for the everyday verbs `ask`, `chat`, `feed`, `tail`,
   `commitments`, `agents`, `sessions`, `tasks`, `status`, `setup`. These
   verbs run on the `bench` alias today; native `benchagi` equivalents are
-  landing per the roadmap. New users should prefer `benchagi`.
+  landing per the roadmap. New Excalibur work should use `excalibur`.
 
-`benchagi` is the canonical command going forward. `bench` continues to work
-as a deprecated alias so existing scripts and muscle memory don't break. Both
-binaries discover agents from the same `openclaw.json`, share the same install
-URL, and live in the same npm package + Homebrew tap.
+`benchagi` retains its current behavior while the Excalibur preview is
+tempered. `bench` continues to work as a compatibility command so existing scripts
+and muscle memory don't break. All three binaries live in the same npm package;
+the published Homebrew formula remains on its current release until beta.15 is
+published.
+
+```sh
+excalibur                         # shared Desktop/CLI conversation surface
+excalibur ask "summarize this"    # single turn
+excalibur context list           # local + exact bound instance only
+excalibur sessions               # explicit scoped resume IDs
+excalibur providers status       # sidecar + cloud-read posture
+excalibur legacy-grok-acp        # explicit operator diagnostic only
+excalibur doctor                 # state modes, boundaries, and PATH shadows
+```
 
 ## The launcher (boot + agent picker)
 
@@ -75,9 +98,9 @@ benchagi 1.0.0-beta.1 · agent kestrel-aurelius · type /exit or Ctrl-D to quit
 Full V2 docs: see `docs/v2/SPEC.md` and the wiki entry at
 `~/.openclaw/wiki/main/_boards/nodes/master/benchagi.md`.
 
-## V1 (`bench`, deprecated alias) at a glance
+## V1 (`bench`, 1.x compatibility command) at a glance
 
-`bench` is the deprecated back-compat alias. It still works and gives you the
+`bench` is the retained 1.x compatibility command. It still works and gives you the
 everyday verbs you already use in Codex / Claude Code — `ask`, `chat`, `feed`,
 `tail` — pointed at your local OpenClaw agent runtime. These verbs run on the
 `bench` alias today; native `benchagi` equivalents are landing per the roadmap.
@@ -96,79 +119,50 @@ Background tasks
   succeeded acp       Context engine turn maintenance  58s ago
 ```
 
-## Install (customer)
+## Install (CLI only)
 
-The one-liner installs Node 20+ checks, OpenClaw verification, and the CLI
-itself. On macOS it also installs `~/Applications/BenchAGI.app` and pins the
-BenchAGI glyph in the Dock. It is idempotent and safe to re-run.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BenchAGI/bench-cli/main/scripts/install.sh | sh
-```
-
-...or directly from the GitHub source tarball:
+After beta.15 is published from merged mainline, install that exact package
+version. Do not install from `main` or another moving branch:
 
 ```bash
-npm  install -g https://github.com/BenchAGI/bench-cli/archive/refs/heads/main.tar.gz
-pnpm add    -g https://github.com/BenchAGI/bench-cli/archive/refs/heads/main.tar.gz
-yarn global add https://github.com/BenchAGI/bench-cli/archive/refs/heads/main.tar.gz
+npm  install -g @benchagi/cli@1.0.0-beta.15
+pnpm add    -g @benchagi/cli@1.0.0-beta.15
+yarn global add @benchagi/cli@1.0.0-beta.15
 ```
 
-The package name is `@benchagi/cli`; use that form once the public npm package
-is published. Until then, the installer defaults to the GitHub tarball so a
-fresh machine can install directly from `main`.
-
-After install, run:
+After the matching release tag exists, the portable installer is likewise
+pinned to beta.15 and rejects branch/git inputs:
 
 ```bash
-benchagi doctor
-bench setup            # legacy readiness check (deprecated alias)
+curl -fsSL https://raw.githubusercontent.com/BenchAGI/bench-cli/v1.0.0-beta.15/scripts/install.sh | sh
 ```
 
-If the macOS app ever needs to be repaired or you installed through Homebrew,
-run:
+For the pre-release internal preview, use only the checksum-pinned transfer
+tarball produced by the package canary; do not describe it as sealed until the
+source has merged and the release digest has been verified. In every case the
+installer changes only the CLI package. It does not install, replace, rename,
+launch, or pin any desktop application. In particular,
+`/Applications/Excalibur.app` build 7 remains untouched until a separate
+explicit desktop installation approval.
+
+After install, verify the command actually selected by `PATH` and the sidecar
+contract/model/memory/schedules posture:
 
 ```bash
-benchagi install-app
+excalibur version
+excalibur doctor
 ```
 
-The Dock app records the exact `benchagi` installation that created it. If that
-installation moves or is removed, it falls back to `PATH`, preferring user/global
-package-manager bins before Homebrew so an older formula does not shadow a newer
-curl or npm install.
-
-`benchagi doctor` is the canonical post-install check. It verifies the V2
-streaming console: local Gateway protocol support, event-frame methods,
-discovered agents, and Firebase Direct identity when signed in.
-For local Claude/Codex seat memory capture, it must report the gateway method
-`local-seat.capture`; if that method is missing, upgrade OpenClaw before
-launching local seats.
-
-`bench setup` is the legacy readiness check on the deprecated `bench` alias.
-It verifies the legacy command surface and local OpenClaw readiness:
-1. `openclaw` is on your `PATH`,
-2. your local gateway is reachable,
-3. at least one agent is configured,
-4. (optional) the default agent answers a ping.
-
-If something is off, `bench setup --fix` invokes `openclaw doctor --repair`
-non-interactively to apply the safe migrations.
+`benchagi doctor` and `bench setup` remain available as compatibility-console
+and OpenClaw readiness checks, respectively. They are not substitutes for
+`excalibur doctor` and the installer does not invoke either automatically.
 
 ### Homebrew
 
-```bash
-brew install BenchAGI/tap/benchagi
-```
-
-The tap lives at <https://github.com/BenchAGI/homebrew-tap>. The canonical
-`benchagi` formula installs both binaries; `brew install BenchAGI/tap/bench`
-remains as a deprecated alias formula that installs the identical artifact. The
-formula stub for publishing it is in `scripts/homebrew/benchagi.rb`.
-
-Homebrew leaves Dock mutation to the user. Run `benchagi install-app` after
-`brew install` for the same macOS Dock launcher experience as the curl
-installer. The generated app pins the Homebrew formula that created it, so rerun
-`benchagi install-app` after `brew upgrade benchagi`.
+The candidate formula in `scripts/homebrew/benchagi.rb` is pinned to the beta.15
+release tag and installs all three terminal commands. Publish it only after its
+placeholder SHA-256 is replaced with the sealed release digest. The formula is
+also CLI-only and never mutates a desktop app or Dock state.
 
 ## Requirements
 
@@ -316,7 +310,7 @@ V2 (`benchagi` native streaming):
 - [x] Device-identity signed handshake (piggybacks on openclaw's pairing)
 - [x] Auto-discovery of gateway token from `openclaw.json`
 - [x] Hammer-Anvil reviewed spec (PRE-SPEC-VERIFICATION + 6 ADRs + ANVIL-2)
-- [ ] Homebrew tap publish for v1.0.0-beta.12
+- [ ] Homebrew tap publish for v1.0.0-beta.15 after sealed digest verification
 - [ ] Cloud-relay primary transport (v1.1, gated on cloud chat endpoint)
 - [ ] Cross-machine `--device-flow` (PKCE code-paste)
 - [ ] Migrate useful `bench` verbs into `benchagi` native protocol

@@ -9,8 +9,8 @@ function shortModel(m) {
 }
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 export async function resolveRoster(opts = {}) {
-    const entitled = await resolveEntitledAgents().catch(() => null);
-    if (entitled && entitled.length) {
+    const entitled = await resolveEntitledAgents();
+    if (entitled !== null) {
         return entitled.map((a) => ({
             agentId: a.agentId,
             name: cap(a.name),

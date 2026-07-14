@@ -9,8 +9,15 @@ import { Box, Text, render, useApp, useInput } from "ink";
 import { c, setLogSink, BRAND_HEX } from "../render/ansi.js";
 import { highlight, highlightCode, annotateCodeBlocks } from "../render/highlight.js";
 import { CLI_VERSION } from "../commands/version.js";
-import type { ChatRunner } from "../chat-runner.js";
-import { parseSlash, findCommand, renderHelp, SLASH_COMMANDS } from "../repl/slash.js";
+import type { ConversationRuntime } from "../runtime/conversation-runtime.js";
+import {
+  buildRegistry,
+  EXCALIBUR_SLASH_COMMANDS,
+  findCommand,
+  parseSlash,
+  renderHelp,
+  SLASH_COMMANDS,
+} from "../repl/slash.js";
 import type { ThinkingMode } from "../render/stream.js";
 import { LogStore } from "./log-store.js";
 import { StatusBar, type HealthState } from "./status-bar.js";
@@ -21,7 +28,7 @@ import { Palette, PALETTE_ROWS } from "./palette.js";
 import { containsMouseEvent, installTuiScreenMode, mouseWheelDelta } from "./terminal-events.js";
 
 export type TuiProps = {
-  runner: ChatRunner;
+  runner: ConversationRuntime;
   store: LogStore;
   agentId: string;
   model?: string; // already shortened, e.g. "Opus 4.8"
@@ -75,6 +82,9 @@ const THINK_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 export function App(props: TuiProps): JSX.Element {
   const { runner, store, agentId, tier } = props;
+  const registry = agentId === "excalibur"
+    ? buildRegistry(EXCALIBUR_SLASH_COMMANDS)
+    : SLASH_COMMANDS;
   const [model, setModelState] = useState(props.model); // mutable via /model over the flyway
   const { exit } = useApp();
 
@@ -170,7 +180,7 @@ export function App(props: TuiProps): JSX.Element {
   };
 
   const handleSlash = async (name: string, args: string[]): Promise<void> => {
-    const cmd = findCommand(name);
+    const cmd = findCommand(name, registry);
     if (!cmd) {
       store.pushLine(c.dim(`(unknown command: /${name} — try /help)`));
       return;
@@ -178,10 +188,13 @@ export function App(props: TuiProps): JSX.Element {
     switch (cmd.name) {
       case "help":
         store.pushLine(c.bold("commands:"));
-        store.pushLine(renderHelp());
+        store.pushLine(renderHelp(registry));
         break;
       case "status":
         for (const l of statusLines()) store.pushLine(l);
+        if (agentId === "excalibur" && runner.runControlCommand) {
+          for (const l of await runner.runControlCommand("status", args)) store.pushLine(l);
+        }
         break;
       case "thinking": {
         const arg = (args[0] ?? "").toLowerCase();
@@ -206,7 +219,9 @@ export function App(props: TuiProps): JSX.Element {
         props.clearScreen?.(); // wipe the rendered frame too
         break;
       case "switch":
-        if (args[0]) {
+        if (agentId === "excalibur") {
+          store.pushLine(c.dim("(Excalibur V1 is pinned to Grok 4.5; use /seat and /route for attestation)"));
+        } else if (args[0]) {
           store.pushLine(c.dim(`(agent switch is a relaunch for now — exit and run:  benchagi ${args[0]})`));
         } else {
           store.pushLine(c.dim("(usage: /switch <agent> — relaunches the seat; hot-swap is coming)"));
@@ -247,6 +262,16 @@ export function App(props: TuiProps): JSX.Element {
       case "exit":
         cleanupAndExit();
         break;
+      default:
+        if (agentId === "excalibur" && runner.runControlCommand
+            && EXCALIBUR_SLASH_COMMANDS.some((item) => item.name === cmd.name)) {
+          try {
+            for (const line of await runner.runControlCommand(cmd.name, args)) store.pushLine(line);
+          } catch (error) {
+            store.pushLine(c.dim(`(${(error as Error).message})`));
+          }
+        }
+        break;
     }
   };
 
@@ -267,7 +292,7 @@ export function App(props: TuiProps): JSX.Element {
   // Bottom-anchored: the framed text area fills the screen and the conversation emerges from just
   // above the input. Show the lines that fit; older lines scroll off the top (PgUp to reveal).
   const items = pending.length > 0 ? lines.concat(pending) : lines;
-  const menuRows = slashMenuRows(istate.buffer, SLASH_COMMANDS); // shrink the viewport to fit the slash menu
+  const menuRows = slashMenuRows(istate.buffer, registry); // shrink the viewport to fit the slash menu
   // Reserve rows below the text frame: palette replaces working+input when open.
   const budget = Math.max(3, paletteOpen ? height - 4 - PALETTE_ROWS : height - 7 - menuRows);
   const maxScroll = Math.max(0, items.length - budget);
@@ -347,7 +372,7 @@ export function App(props: TuiProps): JSX.Element {
       ) : null}
       {paletteOpen ? (
         <Palette
-          commands={SLASH_COMMANDS}
+          commands={registry}
           width={width}
           onRun={(name) => {
             setPaletteOpen(false);
@@ -367,8 +392,8 @@ export function App(props: TuiProps): JSX.Element {
             // Only consume a/d/r as control keys while a run is in flight (mirrors the readline `busy`
             // guard in prompt.ts) — otherwise 'r' (expand toggle) would eat the first letter of an idle
             // message like "roof"/"remove". Live isInFlight() check, no 250ms-polled staleness.
-            canConsumeKey={(key) => runner.isInFlight() && runner.canHandleApprovalKey(key)}
-            registry={SLASH_COMMANDS}
+            canConsumeKey={(key) => (runner.isInFlight() || runner.hasPendingApproval()) && runner.canHandleApprovalKey(key)}
+            registry={registry}
             onSubmit={handleSubmit}
             onApproval={(key) => void runner.handleApprovalKey(key)}
             onInterrupt={() => void runner.interruptCurrent()}
@@ -399,9 +424,13 @@ function cap(s: string): string {
 
 // Launch the ink TUI: install the log sink so renderer output flows into the buffer, render the app,
 // and restore the sink on exit. The caller (cloud-seat) owns runner.connect()/close().
-export async function runTui(runner: ChatRunner, props: Omit<TuiProps, "store" | "runner">): Promise<void> {
+export async function runTui(runner: ConversationRuntime, props: Omit<TuiProps, "store" | "runner">): Promise<void> {
   const store = new LogStore();
-  store.pushLine(c.dim(`benchagi ${CLI_VERSION} · 🦅 type a message, /help for commands, /exit to quit`));
+  store.pushLine(c.dim(
+    props.agentId === "excalibur"
+      ? `excalibur ${CLI_VERSION} · Grok 4.5 shared Desktop/CLI surface · /help for controls`
+      : `benchagi ${CLI_VERSION} · 🦅 type a message, /help for commands, /exit to quit`,
+  ));
   setLogSink(store.write);
   const restoreScreen = installTuiScreenMode();
   // Holder so /clear can reach ink's instance.clear() (the instance doesn't exist until render()).

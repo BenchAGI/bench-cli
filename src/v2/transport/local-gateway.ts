@@ -9,7 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { connect as netConnect } from "node:net";
-import { WebSocket } from "ws";
+import { WebSocket, type RawData } from "ws";
 import type { ConnectParams, EventFrame, HelloOk, RequestFrame, ResponseFrame } from "../protocol/types.js";
 import { GATEWAY_CLIENT_CAPS, PROTOCOL_VERSION } from "../protocol/types.js";
 import { CLI_VERSION } from "../commands/version.js";
@@ -132,7 +132,7 @@ export class LocalGatewayWsTransport implements Transport {
       });
 
       // Temporary handler — replaced by installSteadyStateHandlers on success.
-      const initialMessage = (raw: WebSocket.RawData) => {
+      const initialMessage = (raw: RawData) => {
         const data = typeof raw === "string" ? raw : raw.toString();
         this.rawFrameLog?.("in", data);
         let msg: unknown;
@@ -170,7 +170,7 @@ export class LocalGatewayWsTransport implements Transport {
 
       let pendingConnectId = "";
 
-      const realInitial = (raw: WebSocket.RawData) => initialMessage(raw);
+      const realInitial = (raw: RawData) => initialMessage(raw);
       ws.on("message", realInitial);
 
       ws.on("error", (err) => {
@@ -229,7 +229,7 @@ export class LocalGatewayWsTransport implements Transport {
         const req: RequestFrame = { type: "req", id, method: "connect", params };
 
         return await new Promise<HelloOk>((resolveConnect, rejectConnect) => {
-          const onMsg = (raw: WebSocket.RawData) => {
+          const onMsg = (raw: RawData) => {
             const data = typeof raw === "string" ? raw : raw.toString();
             let msg: unknown;
             try { msg = JSON.parse(data); } catch { return; }
