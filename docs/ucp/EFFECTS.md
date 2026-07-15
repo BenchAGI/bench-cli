@@ -302,9 +302,9 @@ Broad operator denials remain correct outside these typed routes. Wrapping a pro
 Verified on the current stabilized tree:
 
 - build passed;
-- the current UCP suite passed 21/21, covering GateKeeper, grant-store digest/expiry/bundle bounds, full receipt validation, tenant binding and bulk/placeholder denial, typed input, scrubbed child environments, health's non-ambient probes, packet schema/digest/structural authority, the absence of UCP draft-publication IDs, and the seat/mail fail-closed boundaries;
+- the current UCP suite passed 22/22, covering GateKeeper, closed input-pipe handling, grant-store digest/expiry/bundle bounds, full receipt validation, tenant binding and bulk/placeholder denial, typed input, scrubbed child environments, health's non-ambient probes, packet schema/digest/structural authority, the absence of UCP draft-publication IDs, and the seat/mail fail-closed boundaries;
 - `ucp-smoke.sh` passed the local UCP suite; draft publication is absent from UCP and enters only through exact `/orchestra propose` metadata and the shared sidecar;
-- the full v2 suite passed 337/337, package smoke passed 42/42, and the package canary passed;
+- the full v2 suite passed 338/338, package smoke passed 42/42, and the package canary passed;
 - the Aurelius Pattern A, operator guard, launcher, adapter, and packager suite passed 74/74, with exact 19/19 non-hard-denied effect-set parity against the CLI and direct draft-publication IDs denied;
 - a fresh 2026-07-15T04:53:11Z health card ran with zero `secretUses`, no open grants, nine blockers, and `fullyReady:false`;
 - the card observed `node:macbook` at `100.64.0.1`, OpenClaw HTTP 200 but locked/unauthed, memory unreachable, Bench `missing_config`, mesh control+DERP HTTP 200 but locked, GateKeeper/GitHub/MCP locked, and operator policy missing.

@@ -235,7 +235,7 @@ Carry these until fresh evidence closes them:
 - Grant issuance now verifies a recent matching dry-run receipt and stores its ID; execution enforces the request digest. `github.watch_checks` now enforces the exact expected head SHA.
 - UCP `seat.dispatch` is a fail-closed validator, not the live model transport. The packaged `/orchestra` broker has not been exercised in this proof pass.
 - CS grant and mesh mint are ceremony stubs; live execution is denied.
-- GateKeeper unit coverage passes in the 21/21 UCP suite, including child-only injection, scrubbed child environments, and presence behavior. Real Touch ID plus real 1Password materialization remains unperformed.
+- GateKeeper unit coverage passes in the 22/22 UCP suite, including child-only injection, scrubbed child environments, closed input-pipe handling, and presence behavior. Real Touch ID plus real 1Password materialization remains unperformed.
 - A prior credential-handling incident recorded a password printed into a transcript and recommended rotation. Do not repeat the value; keep rotation as a residual until independently confirmed.
 - mini1 services self-heal after authenticated restart, but a power-loss boot can remain FileVault-locked pending human unlock unless infrastructure closes the gap.
 

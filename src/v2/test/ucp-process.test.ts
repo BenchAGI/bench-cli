@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { nonSecretChildEnvironment } from "../ucp/process.js";
+import { nonSecretChildEnvironment, runCaptured } from "../ucp/process.js";
 
 test("ordinary UCP subprocesses inherit operational context but no ambient credentials", () => {
   const environment = nonSecretChildEnvironment({
@@ -18,4 +18,15 @@ test("ordinary UCP subprocesses inherit operational context but no ambient crede
   assert.equal(environment.GH_TOKEN, undefined);
   assert.equal(environment.BENCHAGI_API_TOKEN, undefined);
   assert.equal(environment.NODE_OPTIONS, undefined);
+});
+
+test("captured subprocess tolerates input pipes closing after a fast child exit", async () => {
+  const oversizedInput = "x".repeat(2 * 1024 * 1024);
+  const result = await runCaptured(process.execPath, ["-e", "process.exit(0)"], {
+    input: oversizedInput,
+    extraFdInput: oversizedInput,
+  });
+
+  assert.equal(result.code, 0);
+  assert.equal(result.timedOut, false);
 });

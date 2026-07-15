@@ -79,11 +79,22 @@ export async function runCaptured(command, args, options = {}) {
         };
         child.on("error", () => finish(127));
         child.on("close", (code) => finish(code ?? 1));
+        const handleInputError = (error) => {
+            const code = error.code;
+            // A short-lived child may exit before Node finishes flushing stdin or
+            // fd 3. Its exit status remains authoritative in that expected race.
+            if (code === "EPIPE" || code === "ERR_STREAM_DESTROYED")
+                return;
+            finish(127);
+        };
+        child.stdin?.on("error", handleInputError);
         child.stdin?.end(options.input ?? "");
         if (options.extraFdInput !== undefined) {
             const stream = child.stdio[3];
-            if (stream && "end" in stream)
+            if (stream && "end" in stream) {
+                stream.on("error", handleInputError);
                 stream.end(options.extraFdInput);
+            }
         }
     });
 }

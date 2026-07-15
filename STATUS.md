@@ -10,8 +10,8 @@
 Reported results:
 
 - CLI build: **PASS**.
-- UCP suite: **21/21 PASS**.
-- Full v2 regression suite: **337/337 PASS**; package smoke: **42/42 PASS**; package canary: **PASS**.
+- UCP suite: **22/22 PASS**.
+- Full v2 regression suite: **338/338 PASS**; package smoke: **42/42 PASS**; package canary: **PASS**.
 - `scripts/ucp-smoke.sh`: **PASS** for local UCP boundaries; no draft-publication action is registered there.
 - Aurelius Pattern A, operator guard, launcher, adapter, and packager suite: **74/74 PASS**.
 - Guard/CLI non-hard-denied effect-set parity: **19/19 exact**; direct draft-publication effect IDs are denied.
@@ -152,9 +152,9 @@ Durable mission bundles are disabled. Grants bind the exact effect ID and SHA-25
 ## Proof checklist
 
 - [x] Build passes.
-- [x] Current UCP suite passes 21/21.
+- [x] Current UCP suite passes 22/22.
 - [x] `ucp-smoke.sh` passes the local UCP boundary checks, confirms draft publication is absent from UCP, and performs no mutation.
-- [x] Full v2 regression suite passes 337/337, package smoke passes 42/42, and the package canary passes.
+- [x] Full v2 regression suite passes 338/338, package smoke passes 42/42, and the package canary passes.
 - [x] Aurelius Pattern A, operator guard, launcher, adapter, and packager suite passes 74/74.
 - [x] Guard and CLI non-hard-denied effect sets match exactly at 19/19; direct invocation of the canonical sidecar draft action and its retired legacy alias is denied.
 - [x] Fresh health card runs, identifies the MacBook as a node, reports nine blockers, and records zero secret uses.
