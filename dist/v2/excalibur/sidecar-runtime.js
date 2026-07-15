@@ -331,6 +331,15 @@ export class ExcaliburSidecarRuntime {
                         "  no proposal, approval, or executor was invoked",
                     ];
                 }
+                if (requested.publication.intent.payload.principalId
+                    !== this.controlSession.principal.principalId
+                    || requested.publication.intent.payload.sessionId !== this.session.sessionId) {
+                    return [
+                        "Orchestra · publication proposal unavailable",
+                        "  broker provenance does not bind the authenticated principal and active conversation",
+                        "  no proposal, approval, publisher verification, provider read, or executor was invoked",
+                    ];
+                }
                 const created = await this.transport.createProposal({
                     conversationId: this.session.sessionId,
                     intent: requested.publication.intent,
@@ -348,15 +357,18 @@ export class ExcaliburSidecarRuntime {
                     "  exact sidecar approval card is active; no executor runs before [A]",
                 ];
             }
-            if (_args[0] === "advance" && this.controlSession.effectsPosture !== "approval_bound") {
+            if (["prepare", "advance"].includes(_args[0] || "")
+                && this.controlSession.effectsPosture !== "approval_bound") {
                 return [
-                    "Orchestra · advance locked",
+                    `Orchestra · ${_args[0]} locked`,
                     `  Excalibur effects posture is ${this.controlSession.effectsPosture}; no broker was invoked`,
                 ];
             }
             return await runOrchestraCommand(_args, {
                 env: this.opts.env ?? process.env,
                 execFileFn: this.opts.orchestraExecFileFn,
+                principalId: this.controlSession.principal.principalId,
+                sessionId: this.session.sessionId,
                 onProgress: (line) => println(c.dim(line)),
             });
         }
@@ -437,6 +449,9 @@ export class ExcaliburSidecarRuntime {
         if (!this.session || !this.controlSession || !capability || capability.kind !== "action"
             || expectedInstance !== proposal.instanceId
             || proposal.conversationId !== this.session.sessionId
+            || (proposal.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+                && (proposal.payload.principalId !== this.controlSession.principal.principalId
+                    || proposal.payload.sessionId !== this.session.sessionId))
             || (eventRunId !== undefined && eventRunId !== proposal.commandId)
             || proposal.policyResult.decision !== "allow"
             || capability.availability.status === "unavailable"

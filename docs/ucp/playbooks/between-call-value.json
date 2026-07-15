@@ -104,12 +104,19 @@
       "on_failure": "allow_local_prepare_only"
     },
     {
-      "id": "prepare-worktree",
-      "kind": "effect",
-      "effect": "worktree.prepare",
-      "modes": ["prepare"],
-      "target_fields": ["repository_ref", "base_ref"],
-      "dry_run": false,
+      "id": "prepare-mission",
+      "kind": "orchestra",
+      "command": "/orchestra prepare",
+      "input": "absolute_owner_private_mission_brief_json",
+      "requires_authenticated_principal": true,
+      "requires_active_session": true,
+      "requires_approval_bound_session": true,
+      "cli_wrapper": {
+        "schema": "excalibur-pattern-a-prepare-request-v1",
+        "principal_id": "authenticated_control_principal",
+        "session_id": "active_conversation",
+        "brief": "parsed_owner_private_json"
+      },
       "on_failure": "stop"
     },
     {
@@ -117,10 +124,13 @@
       "kind": "effect",
       "effect": "packet.freeze",
       "modes": ["prepare"],
+      "requires": ["prepare-mission"],
       "constraints": {
         "allowed_paths_from_input": true,
         "max_files_from_input": true,
-        "credentials": "deny",
+        "documentary_protected_command_prose": "allow",
+        "effects": "none",
+        "credentials": "forbidden",
         "merge": "deny",
         "deploy": "deny",
         "send": "deny"
@@ -129,11 +139,29 @@
       "on_failure": "stop"
     },
     {
+      "id": "inspect-status",
+      "kind": "orchestra",
+      "command": "/orchestra status",
+      "requires": ["prepare-mission"],
+      "read_only": true,
+      "on_failure": "stop"
+    },
+    {
+      "id": "inspect-progress",
+      "kind": "orchestra",
+      "command": "/orchestra progress",
+      "requires": ["prepare-mission"],
+      "read_only": true,
+      "bounded_projection": ["phase", "task", "round"],
+      "on_failure": "stop"
+    },
+    {
       "id": "dispatch-seats",
       "kind": "orchestra",
       "command": "/orchestra advance",
       "requires_exact_mission_digest": true,
-      "requires": ["freeze-packet"],
+      "requires_approval_bound_session": true,
+      "requires": ["freeze-packet", "inspect-status", "inspect-progress"],
       "on_failure": "stop_or_record_explicit_sit_out"
     },
     {
@@ -154,6 +182,14 @@
       "requires": ["local-proof"],
       "requires_broker_state": "ANVIL_GATED",
       "requires_exact_operator_approval_card": true,
+      "input": "absolute_owner_private_publication_metadata_json",
+      "metadata_schema": {
+        "schema": "excalibur-pattern-a-publication-metadata/v1",
+        "title": "bounded_nonempty_string",
+        "body": "bounded_string",
+        "labels": []
+      },
+      "execution_owner": "shared_sidecar_only",
       "constraints": {
         "must_be_draft": true,
         "force_push": false,
@@ -208,7 +244,7 @@
   "exit_criteria": [
     "packet_is_bounded_and_private_data_safe",
     "local_proof_and_residuals_are_recorded",
-    "matching_publish_dry_run_exists",
+    "exact_publication_metadata_and_sidecar_approval_exist",
     "remote_branch_matches_expected_sha",
     "provider_confirms_draft_true",
     "checks_are_reported_for_exact_sha",

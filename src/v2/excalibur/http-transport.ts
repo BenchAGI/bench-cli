@@ -162,6 +162,8 @@ export type ExcaliburDraftPrPayload = {
   changedPathsDigest: string;
   packetDigest: string;
   missionId: string;
+  principalId: string;
+  sessionId: string;
   missionDigest: string;
   publicationGateDigest: string;
   title: string;
@@ -722,8 +724,8 @@ function validDraftPrTarget(value: unknown): value is ExcaliburDraftPrTarget {
 function validDraftPrPayload(value: unknown): value is ExcaliburDraftPrPayload {
   if (!isRecord(value) || !exactKeys(value, [
     "worktreePath", "remoteName", "baseRef", "baseSha", "headRef", "headSha",
-    "patchDigest", "changedPathsDigest", "packetDigest", "missionId", "missionDigest",
-    "publicationGateDigest", "title", "body", "labels", "draftOnly",
+    "patchDigest", "changedPathsDigest", "packetDigest", "missionId", "principalId",
+    "sessionId", "missionDigest", "publicationGateDigest", "title", "body", "labels", "draftOnly",
   ])) return false;
   return isAbsoluteWorktreePath(value.worktreePath)
     && value.remoteName === "origin"
@@ -737,6 +739,8 @@ function validDraftPrPayload(value: unknown): value is ExcaliburDraftPrPayload {
     && DIGEST_RE.test(String(value.changedPathsDigest || ""))
     && DIGEST_RE.test(String(value.packetDigest || ""))
     && PATTERN_A_MISSION_ID_RE.test(String(value.missionId || ""))
+    && isIdentifier(value.principalId)
+    && isIdentifier(value.sessionId)
     && DIGEST_RE.test(String(value.missionDigest || ""))
     && DIGEST_RE.test(String(value.publicationGateDigest || ""))
     && isBoundedText(value.title, 256)
@@ -1329,6 +1333,13 @@ export class ExcaliburHttpTransport {
     if (input.intent.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
         && (!validDraftPrTarget(input.intent.target) || !validDraftPrPayload(input.intent.payload))) {
       throw new ExcaliburTransportError("BAD_PROPOSAL_INTENT", "draft PR proposal intent is malformed");
+    }
+    if (input.intent.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+        && (input.intent.payload as ExcaliburDraftPrPayload).sessionId !== input.conversationId) {
+      throw new ExcaliburTransportError(
+        "BAD_PROPOSAL_INTENT",
+        "draft PR proposal session provenance does not match the active conversation",
+      );
     }
     const result = parseCreateProposalResult(await this.requestJson(
       EXCALIBUR_CONTROL_PATHS.proposals,

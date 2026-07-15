@@ -1,8 +1,8 @@
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
-import { access, open, readdir, realpath, stat } from "node:fs/promises";
+import { access, lstat, open, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { CLI_VERSION } from "../commands/version.js";
 import { EXCALIBUR_EXPECTED_DIGESTS } from "./contract-baseline.js";
@@ -30,6 +30,18 @@ export type LauncherInspection = {
   manifestPath: string;
   classification: "canonical" | "legacy_or_unverified" | "invalid";
   issues: string[];
+};
+
+export type BundledRuntimeClosure = {
+  runtimeRoot: string;
+  nodeSha256: string;
+  cliEntrySha256: string;
+  symlinkCount: number;
+};
+
+export type ExpectedBundledRuntimeDigests = {
+  nodeSha256: string;
+  cliEntrySha256: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,6 +106,87 @@ async function readBoundedFile(path: string, maximum: number): Promise<Buffer> {
   } finally {
     await handle?.close().catch(() => {});
   }
+}
+
+function insideOrEqual(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(root, candidate);
+  return pathFromRoot === "" || (!isAbsolute(pathFromRoot)
+    && pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`));
+}
+
+async function hashSealedRuntimeFile(path: string, label: string, maximum: number): Promise<string> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    const info = await handle.stat();
+    if (!info.isFile() || info.nlink !== 1 || info.size < 1 || info.size > maximum
+        || (info.mode & 0o022) !== 0 || (info.mode & 0o111) === 0) {
+      throw new Error(`${label} must be a bounded, executable, non-mutable, single-link regular file`);
+    }
+    return createHash("sha256").update(await handle.readFile()).digest("hex");
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+/**
+ * Verifies the copied launcher closure before it is signed. Relative links such
+ * as node_modules/.bin entries are allowed only when their final realpath stays
+ * inside the copied runtime; absolute, broken, and escaping links are rejected.
+ */
+export async function verifyBundledRuntimeClosure(
+  runtimeRoot: string,
+  expected?: ExpectedBundledRuntimeDigests,
+): Promise<BundledRuntimeClosure> {
+  if (!isAbsolute(runtimeRoot) || /[\u0000-\u001f\u007f]/.test(runtimeRoot)) {
+    throw new Error("bundled runtime root must be an absolute path");
+  }
+  const rootInfo = await lstat(runtimeRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new Error("bundled runtime root must be a real directory");
+  }
+  const canonicalRoot = await realpath(runtimeRoot);
+  const lexicalRoot = resolve(runtimeRoot);
+  const nodePath = join(runtimeRoot, "node");
+  const cliEntryPath = join(runtimeRoot, "cli", "bin", "excalibur.mjs");
+  const [nodeSha256, cliEntrySha256] = await Promise.all([
+    hashSealedRuntimeFile(nodePath, "bundled Node runtime", 512 * 1024 * 1024),
+    hashSealedRuntimeFile(cliEntryPath, "bundled CLI entry", 16 * 1024 * 1024),
+  ]);
+  if (expected && (nodeSha256 !== expected.nodeSha256 || cliEntrySha256 !== expected.cliEntrySha256)) {
+    throw new Error("bundled Node or CLI entry bytes do not match the canonical source copy");
+  }
+
+  let visited = 0;
+  let symlinkCount = 0;
+  const walk = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      visited += 1;
+      if (visited > 250_000) throw new Error("bundled runtime closure exceeds the audit entry bound");
+      const path = join(directory, entry.name);
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) {
+        symlinkCount += 1;
+        const linkTarget = await readlink(path);
+        if (isAbsolute(linkTarget)) {
+          throw new Error(`bundled runtime contains an absolute symlink: ${path}`);
+        }
+        const lexicalTarget = resolve(dirname(path), linkTarget);
+        if (!insideOrEqual(lexicalRoot, lexicalTarget)) {
+          throw new Error(`bundled runtime contains a lexically escaping symlink: ${path}`);
+        }
+        const resolvedTarget = await realpath(path).catch(() => null);
+        if (!resolvedTarget || !insideOrEqual(canonicalRoot, resolvedTarget)) {
+          throw new Error(`bundled runtime contains a broken or escaping symlink: ${path}`);
+        }
+        continue;
+      }
+      if (info.isDirectory()) await walk(path);
+    }
+  };
+  await walk(runtimeRoot);
+  return { runtimeRoot: canonicalRoot, nodeSha256, cliEntrySha256, symlinkCount };
 }
 
 export async function verifyCanonicalLauncherManifest(

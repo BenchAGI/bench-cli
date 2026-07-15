@@ -117,26 +117,46 @@ state-root drift, malformed output, or a bad attestation blocks the command.
 Only the configured state root is passed as `EXCALIBUR_PATTERN_A_STATE_ROOT`;
 legacy ambient state-root overrides are removed.
 
-`/orchestra init <absolute-mission-json>` freezes owner-private local mission
-state and invokes no model or external effect, so it does not require an
-approval-bound session. `/orchestra status <mission-id>` is read-only.
-`/orchestra advance <mission-id> <exact-mission-digest>` is available only in
-an approval-bound Excalibur session. Both commands invoke that exact executable
-with an argument vector and `shell: false`, require a bounded
-`excalibur.pattern-a-broker-result.v1` JSON response, and render mission state
-plus receipt counts. There is no PATH discovery or provider fallback; missing
-or invalid configuration renders `Orchestra · unavailable` and invokes
-nothing.
+`/orchestra prepare <absolute-mission-brief-json>` reads one bounded,
+owner-private brief only from an authenticated active conversation in
+`effectsPosture:approval_bound`. The CLI wraps the parsed brief as
+`{schema:"excalibur-pattern-a-prepare-request-v1",principalId,sessionId,brief}`
+and sends that canonical JSON to the pinned broker on stdin; the path itself is
+not broker input. The broker derives and freezes the mission plus its isolated
+worktrees. `/orchestra advance <mission-id> <exact-mission-digest>` is also
+approval-bound and runs the next digest-confirmed wave.
+
+`/orchestra status <mission-id>` and `/orchestra progress <mission-id>` are
+read-only. Status returns bounded mission state, digest, and receipt counts;
+progress returns only the exact mission's bounded phase/task/round projection,
+so an operator can inspect a long run without resubmitting it. These commands
+invoke the exact configured executable with an argument vector and
+`shell: false`. There is no PATH discovery or provider fallback; missing or
+invalid configuration renders `Orchestra · unavailable` and invokes nothing.
 
 After `ANVIL_GATED`, use
-`/orchestra propose <mission-id> <absolute-owner-private-details-json>`. The CLI
-asks that same pinned broker for its exact
+`/orchestra propose <mission-id> <absolute-publication-metadata-json>`. The
+owner-private metadata file has exactly this shape:
+
+```json
+{
+  "schema": "excalibur-pattern-a-publication-metadata/v1",
+  "title": "A bounded draft pull-request title",
+  "body": "The exact reviewed draft pull-request body.",
+  "labels": []
+}
+```
+
+The CLI asks that same pinned broker to derive its exact
 `github.draft_pr.publish.v1` intent, verifies the intent and publication-action
 binding digests, and submits it unchanged to `transport.createProposal` for the
 current sidecar conversation. The response must bind the same target, payload,
-and idempotency key before the existing approval card becomes active. `[A]`
-carries the hidden single-use nonce and `[D]` denies. `/orchestra` has no Git
-executor, provider fallback, or direct publication path.
+and idempotency key before the existing approval card becomes active. The
+payload must also bind `principalId` to the authenticated control principal and
+`sessionId` to that active conversation; any mismatch stops before proposal
+creation or publisher/provider reads. `[A]` carries the hidden single-use nonce
+and `[D]` denies. Only the shared sidecar owns the deterministic publisher;
+`/orchestra` has no Git executor, provider fallback, or direct publication path.
 
 ### Canonical toolbar bundle (staging only)
 
@@ -144,8 +164,9 @@ executor, provider fallback, or direct publication path.
 one exact Node runtime plus the CLI's `bin`, `dist`, `package.json`, and complete
 `node_modules` closure into the app, embeds the checked-in protocol, manifest,
 and routing digests, binds the launch command's SHA-256, declares
-`selfContainedRuntime: true` and `directProviderLaunch: false`, verifies the
-bundle with `codesign --verify --deep --strict`, and then runs
+`selfContainedRuntime: true` and `directProviderLaunch: false`, rejects linked
+or mutable Node inputs and every copied symlink that escapes the runtime,
+requires signing plus staged `codesign --verify --deep --strict`, and then runs
 `excalibur doctor --launch-check` before every interactive launch. It has no
 PATH, BenchAGI, Grok, Claude, or Codex fallback.
 

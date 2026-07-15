@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { EXCALIBUR_ORCHESTRA_CONFIG_SCHEMA, EXCALIBUR_ORCHESTRA_PREFLIGHT_REQUEST_SCHEMA, EXCALIBUR_ORCHESTRA_PREFLIGHT_RESULT_SCHEMA, EXCALIBUR_ORCHESTRA_RESULT_SCHEMA, requestOrchestraPublicationIntent, resolveOrchestraBrokerConfig, runOrchestraCommand, } from "../excalibur/orchestra-broker.js";
+import { EXCALIBUR_ORCHESTRA_CONFIG_SCHEMA, EXCALIBUR_ORCHESTRA_PREFLIGHT_REQUEST_SCHEMA, EXCALIBUR_ORCHESTRA_PREFLIGHT_RESULT_SCHEMA, EXCALIBUR_ORCHESTRA_PREPARE_REQUEST_SCHEMA, EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA, EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX, EXCALIBUR_ORCHESTRA_PROGRESS_RESULT_SCHEMA, EXCALIBUR_ORCHESTRA_RESULT_SCHEMA, requestOrchestraPublicationIntent, resolveOrchestraBrokerConfig, runOrchestraCommand, } from "../excalibur/orchestra-broker.js";
 const DIGEST = "d".repeat(64);
 const RESOURCE_SET_DIGEST = "e".repeat(64);
 function canonicalJson(value) {
@@ -180,21 +180,28 @@ test("status invokes one absolute executable with argv and renders state plus re
     assert.match(lines.join("\n"), /succeeded 4/);
     assert.match(lines.join("\n"), /total 5/);
 });
-test("init freezes one owner-private absolute mission file without approval or shell argv", async () => {
+test("prepare binds an owner-private brief to the authenticated principal and conversation", async () => {
     const configured = await configuredEnvironment();
-    const missionPath = join(String(configured.env.HOME), "mission.json");
-    await writeFile(missionPath, JSON.stringify({ missionId: "mission-init" }), { mode: 0o600 });
+    const briefPath = join(String(configured.env.HOME), "mission-brief.json");
+    const brief = {
+        schema: "excalibur-pattern-a-mission-brief/v1",
+        missionId: "mission-prepared",
+        repository: "BenchAGI/bench-cli",
+    };
+    await writeFile(briefPath, JSON.stringify(brief), { mode: 0o600 });
     let capture = null;
-    const lines = await runOrchestraCommand(["init", missionPath], {
+    const lines = await runOrchestraCommand(["prepare", briefPath], {
         env: configured.env,
+        principalId: "operator-a",
+        sessionId: "20000000-0000-4000-8000-000000000002",
         execFileFn: afterPreflight(configured, async (...args) => {
             capture = args;
             return {
                 stdout: JSON.stringify({
                     schemaVersion: EXCALIBUR_ORCHESTRA_RESULT_SCHEMA,
-                    missionId: "mission-init",
+                    missionId: "mission-prepared",
                     missionDigest: DIGEST,
-                    state: "initialized",
+                    state: "MISSION_DRAFT",
                     receiptCounts: { total: 0 },
                 }),
                 stderr: "",
@@ -202,15 +209,87 @@ test("init freezes one owner-private absolute mission file without approval or s
         }),
     });
     const call = capture;
-    assert.deepEqual(call?.[1], ["init", "--mission", await realpath(missionPath)]);
+    assert.deepEqual(call?.[1], ["prepare"]);
     assert.equal(call?.[2].shell, false);
-    assert.match(lines.join("\n"), /mission-init · initialized/);
-    await chmod(missionPath, 0o644);
-    const rejected = await runOrchestraCommand(["init", missionPath], {
+    assert.deepEqual(JSON.parse(String(call?.[2].input)), {
+        schema: EXCALIBUR_ORCHESTRA_PREPARE_REQUEST_SCHEMA,
+        principalId: "operator-a",
+        sessionId: "20000000-0000-4000-8000-000000000002",
+        brief,
+    });
+    assert.match(lines.join("\n"), /mission-prepared · MISSION_DRAFT/);
+    await chmod(briefPath, 0o644);
+    const rejected = await runOrchestraCommand(["prepare", briefPath], {
         env: configured.env,
+        principalId: "operator-a",
+        sessionId: "20000000-0000-4000-8000-000000000002",
         execFileFn: afterPreflight(configured, async () => { throw new Error("must not execute"); }),
     });
-    assert.match(rejected.join("\n"), /mission JSON must be owned by the current operator/);
+    assert.match(rejected.join("\n"), /brief JSON must be owned by the current operator/);
+    const unbound = await runOrchestraCommand(["prepare", briefPath], {
+        env: configured.env,
+        execFileFn: async () => { throw new Error("must not execute"); },
+    });
+    assert.match(unbound.join("\n"), /authenticated operator principal and active conversation/);
+});
+test("progress renders only the bounded broker projection for the exact mission", async () => {
+    const configured = await configuredEnvironment();
+    const eventBody = {
+        schema: EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA,
+        sequence: 3,
+        priorEventDigest: "a".repeat(64),
+        missionId: "mission-progress",
+        missionDigest: DIGEST,
+        state: "SOL_BUILDING",
+        phase: "sol",
+        status: "STARTED",
+        seat: "sol",
+        taskId: "task-one",
+        round: 1,
+        completed: 1,
+        total: 2,
+        occurredAt: "2026-07-14T12:00:00.000Z",
+    };
+    const event = { ...eventBody, eventDigest: digest(eventBody) };
+    const lines = await runOrchestraCommand(["progress", "mission-progress"], {
+        env: configured.env,
+        execFileFn: afterPreflight(configured, async (_executable, argv) => {
+            assert.deepEqual(argv, ["progress", "--mission-id", "mission-progress"]);
+            return {
+                stdout: JSON.stringify({
+                    schemaVersion: EXCALIBUR_ORCHESTRA_PROGRESS_RESULT_SCHEMA,
+                    missionId: "mission-progress",
+                    missionDigest: DIGEST,
+                    missionState: "SOL_BUILDING",
+                    revision: 4,
+                    eventCount: 3,
+                    latestEvent: event,
+                }),
+                stderr: "",
+            };
+        }),
+    });
+    assert.match(lines.join("\n"), /events: 3/);
+    assert.match(lines.join("\n"), /SOL_BUILDING · revision 4/);
+    assert.match(lines.join("\n"), /progress #3 · sol · sol STARTED · 1\/2/);
+    assert.doesNotMatch(lines.join("\n"), /occurredAt|eventDigest|priorEventDigest/);
+    const malformed = await runOrchestraCommand(["progress", "mission-progress"], {
+        env: configured.env,
+        execFileFn: afterPreflight(configured, async () => ({
+            stdout: JSON.stringify({
+                schemaVersion: EXCALIBUR_ORCHESTRA_PROGRESS_RESULT_SCHEMA,
+                missionId: "mission-progress",
+                missionDigest: DIGEST,
+                missionState: "SOL_BUILDING",
+                revision: 4,
+                eventCount: 3,
+                latestEvent: { ...event, missionId: "another-mission" },
+            }),
+            stderr: "",
+        })),
+    });
+    assert.match(malformed.join("\n"), /Orchestra · unavailable/);
+    assert.match(malformed.join("\n"), /malformed Pattern A progress event/);
 });
 test("advance binds the exact mission digest and exposes no arbitrary broker argv", async () => {
     const configured = await configuredEnvironment();
@@ -223,6 +302,24 @@ test("advance binds the exact mission digest and exposes no arbitrary broker arg
         execFileFn: afterPreflight(configured, async (_executable, received, options) => {
             argv = received;
             timeout = options.timeout;
+            const progressBody = {
+                schema: EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA,
+                sequence: 1,
+                priorEventDigest: "0".repeat(64),
+                missionId: "mission-2",
+                missionDigest: DIGEST,
+                state: "SOL_BUILDING",
+                phase: "sol",
+                status: "STARTED",
+                seat: "sol",
+                taskId: "task-one",
+                round: 1,
+                completed: 0,
+                total: 1,
+                occurredAt: "2026-07-14T12:00:00.000Z",
+            };
+            const progressEvent = { ...progressBody, eventDigest: digest(progressBody) };
+            options.onStderrLine?.(`${EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX}${canonicalJson(progressEvent)}`);
             return {
                 stdout: JSON.stringify({
                     schemaVersion: EXCALIBUR_ORCHESTRA_RESULT_SCHEMA,
@@ -240,6 +337,7 @@ test("advance binds the exact mission digest and exposes no arbitrary broker arg
     ]);
     assert.equal(timeout, 14_400_000);
     assert.match(progress.join("\n"), /may take up to 4 hours; do not resubmit/);
+    assert.match(progress.join("\n"), /progress #1 · sol · sol STARTED · 0\/1/);
     assert.match(lines.join("\n"), /mission-2 · advanced/);
     assert.match(lines.join("\n"), new RegExp(DIGEST));
     const rejected = await runOrchestraCommand(["advance", "mission-2", "not-a-digest"], {
@@ -247,6 +345,62 @@ test("advance binds the exact mission digest and exposes no arbitrary broker arg
         execFileFn: async () => { throw new Error("must not execute"); },
     });
     assert.match(rejected.join("\n"), /exact-mission-digest/);
+});
+test("advance fails closed on a bad progress digest or broken stream continuity", async () => {
+    const configured = await configuredEnvironment();
+    const unsigned = {
+        schema: EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA,
+        sequence: 1,
+        priorEventDigest: "0".repeat(64),
+        missionId: "mission-stream",
+        missionDigest: DIGEST,
+        state: "FABLE_PLANNING",
+        phase: "planning",
+        status: "STARTED",
+        seat: "fable",
+        taskId: null,
+        round: null,
+        completed: 0,
+        total: 1,
+        occurredAt: "2026-07-15T06:00:00.000Z",
+    };
+    const valid = { ...unsigned, eventDigest: digest(unsigned) };
+    const brokerResult = {
+        schemaVersion: EXCALIBUR_ORCHESTRA_RESULT_SCHEMA,
+        missionId: "mission-stream",
+        missionDigest: DIGEST,
+        state: "advanced",
+        receiptCounts: { total: 1 },
+    };
+    const badDigest = await runOrchestraCommand(["advance", "mission-stream", DIGEST], {
+        env: configured.env,
+        execFileFn: afterPreflight(configured, async (_executable, _argv, options) => {
+            options.onStderrLine?.(`${EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX}${canonicalJson({
+                ...valid,
+                eventDigest: "f".repeat(64),
+            })}`);
+            return { stdout: JSON.stringify(brokerResult), stderr: "" };
+        }),
+    });
+    assert.match(badDigest.join("\n"), /invalid digest/);
+    const discontinuous = await runOrchestraCommand(["advance", "mission-stream", DIGEST], {
+        env: configured.env,
+        execFileFn: afterPreflight(configured, async (_executable, _argv, options) => {
+            options.onStderrLine?.(`${EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX}${canonicalJson(valid)}`);
+            const secondUnsigned = {
+                ...unsigned,
+                sequence: 3,
+                priorEventDigest: valid.eventDigest,
+                occurredAt: "2026-07-15T06:01:00.000Z",
+            };
+            options.onStderrLine?.(`${EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX}${canonicalJson({
+                ...secondUnsigned,
+                eventDigest: digest(secondUnsigned),
+            })}`);
+            return { stdout: JSON.stringify(brokerResult), stderr: "" };
+        }),
+    });
+    assert.match(discontinuous.join("\n"), /sequence or prior-digest continuity/);
 });
 test("advance rejects a broker result correlated to another digest", async () => {
     const configured = await configuredEnvironment();
@@ -270,9 +424,7 @@ test("publication intent invokes only the pinned broker command and validates bo
     const configured = await configuredEnvironment();
     const details = join(String(configured.env.HOME), "publish-details.json");
     await writeFile(details, JSON.stringify({
-        headSha: "2".repeat(40),
-        patchDigest: "3".repeat(64),
-        changedPathsDigest: "4".repeat(64),
+        schema: "excalibur-pattern-a-publication-metadata/v1",
         title: "feat: exact Pattern A head",
         body: "Anvil-gated draft-only publication.",
         labels: [],
@@ -292,6 +444,8 @@ test("publication intent invokes only the pinned broker command and validates bo
             changedPathsDigest: "4".repeat(64),
             packetDigest: "5".repeat(64),
             missionId: "mission-publish",
+            principalId: "operator-a",
+            sessionId: "20000000-0000-4000-8000-000000000002",
             missionDigest: "6".repeat(64),
             publicationGateDigest,
             title: "feat: exact Pattern A head",
@@ -308,7 +462,7 @@ test("publication intent invokes only the pinned broker command and validates bo
         execFileFn: afterPreflight(configured, async (_executable, argv, options) => {
             commandCalls += 1;
             assert.deepEqual(argv, [
-                "publish-intent", "--mission-id", "mission-publish", "--details", await realpath(details),
+                "propose", "--mission-id", "mission-publish", "--details", await realpath(details),
             ]);
             assert.equal(options.shell, false);
             assert.equal(options.env.EXCALIBUR_PATTERN_A_STATE_ROOT, configured.stateRoot);
@@ -334,6 +488,40 @@ test("publication intent invokes only the pinned broker command and validates bo
         assert.deepEqual(requested.publication.intent, intent);
         assert.equal(requested.publication.intentDigest, digest(intent));
     }
+    const manualHashes = join(String(configured.env.HOME), "manual-hash-details.json");
+    await writeFile(manualHashes, JSON.stringify({
+        schema: "excalibur-pattern-a-publication-metadata/v1",
+        title: "feat: must derive facts",
+        body: "No operator-supplied Git hashes.",
+        labels: [],
+        headSha: "2".repeat(40),
+    }), { mode: 0o600 });
+    commandCalls = 0;
+    const manualRejected = await requestOrchestraPublicationIntent("mission-publish", manualHashes, {
+        env: configured.env,
+        execFileFn: afterPreflight(configured, async () => {
+            commandCalls += 1;
+            throw new Error("must not invoke proposal command");
+        }),
+    });
+    assert.equal(commandCalls, 0);
+    assert.match("reason" in manualRejected ? manualRejected.reason : "", /only exact Pattern A publication metadata/);
+    const labeled = join(String(configured.env.HOME), "labeled-details.json");
+    await writeFile(labeled, JSON.stringify({
+        schema: "excalibur-pattern-a-publication-metadata/v1",
+        title: "feat: labels remain derived policy",
+        body: "Operator metadata cannot add labels.",
+        labels: ["excalibur"],
+    }), { mode: 0o600 });
+    const labeledRejected = await requestOrchestraPublicationIntent("mission-publish", labeled, {
+        env: configured.env,
+        execFileFn: afterPreflight(configured, async () => {
+            commandCalls += 1;
+            throw new Error("must not invoke proposal command");
+        }),
+    });
+    assert.equal(commandCalls, 0);
+    assert.match("reason" in labeledRejected ? labeledRejected.reason : "", /only exact Pattern A publication metadata/);
     await chmod(details, 0o644);
     commandCalls = 0;
     const rejected = await requestOrchestraPublicationIntent("mission-publish", details, {

@@ -3,7 +3,7 @@
 
 export const EXCALIBUR_CONTRACT_BASELINE = Object.freeze({
   "generatorVersion": 1,
-  "sourceMirrorDigest": "b464aa28162a52986073983894410c07ea183204f71dd639412cc133e1c479e8",
+  "sourceMirrorDigest": "24997ce70586fcb091d7763bdac2a5b174f472d8fd0af94f3cf8a432695fd7e1",
   "protocolVersion": "excalibur-control.v1",
   "schemaVersion": "1.0.0",
   "manifestVersion": "2026-07-14",

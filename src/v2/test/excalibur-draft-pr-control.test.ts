@@ -36,6 +36,8 @@ const payload = {
   changedPathsDigest: "4".repeat(64),
   packetDigest: "5".repeat(64),
   missionId: "pattern-a:mission-might-surface",
+  principalId: "local-operator",
+  sessionId: CONVERSATION_ID,
   missionDigest: "6".repeat(64),
   publicationGateDigest: "7".repeat(64),
   title: "feat(excalibur): add MIGHT surface",
@@ -203,6 +205,7 @@ test("draft-PR proposal and approval bind exact hashes and a non-rendered single
   const card = renderApprovalCard(created.proposal, created.approval).join("\n");
   assert.match(card, /BenchAGI\/bench-cli/);
   assert.match(card, /pattern-a:mission-might-surface/);
+  assert.match(card, new RegExp(`authority: principal local-operator · session ${CONVERSATION_ID}`));
   assert.match(card, new RegExp("7".repeat(64)));
   assert.match(card, /push exact head \+ open draft PR/);
   assert.match(card, /title \(exact JSON string\): "feat\(excalibur\): add MIGHT surface"/);
@@ -246,6 +249,66 @@ test("draft-only authority validation rejects mutable or non-draft intent before
     },
   }), /draft PR proposal intent is malformed/);
   assert.equal(calls, 0);
+
+  await assert.rejects(transport.createProposal({
+    conversationId: CONVERSATION_ID,
+    intent: {
+      actionId: EXCALIBUR_DRAFT_PR_ACTION_ID,
+      target,
+      payload: { ...payload, sessionId: "90000000-0000-4000-8000-000000000009" },
+      idempotencyKey: "draft_pr_provenance_test",
+    },
+  }), /session provenance does not match/);
+  assert.equal(calls, 0);
+
+  const { principalId: _principalId, ...withoutPrincipal } = payload;
+  await assert.rejects(transport.createProposal({
+    conversationId: CONVERSATION_ID,
+    intent: {
+      actionId: EXCALIBUR_DRAFT_PR_ACTION_ID,
+      target,
+      payload: withoutPrincipal,
+      idempotencyKey: "draft_pr_missing_principal_test",
+    },
+  }), /draft PR proposal intent is malformed/);
+  const { sessionId: _sessionId, ...withoutSession } = payload;
+  await assert.rejects(transport.createProposal({
+    conversationId: CONVERSATION_ID,
+    intent: {
+      actionId: EXCALIBUR_DRAFT_PR_ACTION_ID,
+      target,
+      payload: withoutSession,
+      idempotencyKey: "draft_pr_missing_session_test",
+    },
+  }), /draft PR proposal intent is malformed/);
+  assert.equal(calls, 0);
+});
+
+test("createProposal rejects a sidecar response that rewrites principal provenance", async () => {
+  const transport = new ExcaliburHttpTransport({
+    baseUrl: "http://127.0.0.1:4178",
+    posture: "sidecar",
+    scope: { kind: "operator" },
+    accessToken: "synthetic-sidecar-token",
+    fetchFn: async () => json({
+      proposal: {
+        ...proposal(),
+        payload: { ...payload, principalId: "another-operator" },
+      },
+      approval: approval(),
+      receipt: null,
+      replayed: false,
+    }, 201),
+  });
+  await assert.rejects(transport.createProposal({
+    conversationId: CONVERSATION_ID,
+    intent: {
+      actionId: EXCALIBUR_DRAFT_PR_ACTION_ID,
+      target,
+      payload,
+      idempotencyKey: "ik_draft_pr_test",
+    },
+  }), /does not bind the exact submitted intent/);
 });
 
 test("indeterminate GitHub receipts remain typed, visible, and reconciliation-specific", () => {

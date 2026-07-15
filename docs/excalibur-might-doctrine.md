@@ -122,6 +122,11 @@ Keyword scanning of model prose is not the safety mechanism. The system
 classifies registered tools, targets, payloads, and executor identities. Models
 may discuss a forbidden operation; they still cannot invoke it.
 
+Frozen packet prose follows the same rule. `goal`, `proof`, and `nonGoals` may
+quote or explain protected commands; authority remains structural because the
+packet fixes `effects: "none"` and `credentials: "forbidden"` and rejects any
+unsupported authority or credential field.
+
 ## Canonical surface
 
 There is one operator door: **Excalibur One Surface**. The legacy Native,
@@ -138,10 +143,26 @@ paths are prohibited.
 The primary orchestra commands are deliberately few:
 
 - `/orchestra prepare` — derive and freeze a mission plus isolated worktrees;
-- `/orchestra status` — project durable state and progress;
+- `/orchestra status` — read the durable mission state, digest, and receipt counts;
+- `/orchestra progress` — read the bounded phase/task/round progress projection;
 - `/orchestra advance` — run the next bounded reasoning wave;
 - `/orchestra propose` — derive exact publication facts and create the one
   approval-bound draft-PR proposal.
+
+`prepare` accepts one absolute owner-private mission-brief JSON path. The CLI
+parses the brief, wraps it with schema
+`excalibur-pattern-a-prepare-request-v1`, the authenticated operator principal,
+and the active conversation ID, then sends only that canonical wrapper to the
+pinned broker. Both `prepare` and exact-digest `advance` require an
+approval-bound session. `status` and `progress` are read-only and cannot
+resubmit or advance work.
+
+`propose` accepts one absolute owner-private publication-metadata JSON path with
+exactly `schema`, `title`, `body`, and `labels: []`; the schema value is
+`excalibur-pattern-a-publication-metadata/v1`. It can create the exact sidecar
+approval proposal after `ANVIL_GATED`, but it cannot execute Git or GitHub.
+Only the sidecar's registered deterministic executor can publish after exact
+human approval.
 
 `publish` is reserved for the deterministic executor and is not an operator or
 model command alias.

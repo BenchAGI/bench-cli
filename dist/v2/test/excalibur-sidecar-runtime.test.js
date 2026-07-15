@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,7 @@ import { EXCALIBUR_CONTRACT_BASELINE, EXCALIBUR_EXPECTED_DIGESTS, } from "../exc
 import { ExcaliburEffectsLockedError, ExcaliburHttpTransport, EXCALIBUR_DRAFT_PR_ACTION_ID, EXCALIBUR_DRAFT_PR_EXECUTOR_ID, EXCALIBUR_PROTOCOL_VERSION, EXCALIBUR_SCHEMA_VERSION, expectedExcaliburExecutorId, } from "../excalibur/http-transport.js";
 import { loadExcaliburState } from "../excalibur/scoped-state.js";
 import { ExcaliburSidecarRuntime } from "../excalibur/sidecar-runtime.js";
+import { EXCALIBUR_ORCHESTRA_CONFIG_SCHEMA, EXCALIBUR_ORCHESTRA_PREFLIGHT_REQUEST_SCHEMA, EXCALIBUR_ORCHESTRA_PREFLIGHT_RESULT_SCHEMA, } from "../excalibur/orchestra-broker.js";
 const CONTROL_ID = "10000000-0000-4000-8000-000000000001";
 const SESSION_ID = "20000000-0000-4000-8000-000000000002";
 const RUN_ID = "30000000-0000-4000-8000-000000000003";
@@ -282,6 +283,8 @@ function draftProposal() {
             changedPathsDigest: "4".repeat(64),
             packetDigest: "5".repeat(64),
             missionId: "pattern-a:mission-might-surface",
+            principalId: "operator-a",
+            sessionId: SESSION_ID,
             missionDigest: "6".repeat(64),
             publicationGateDigest: "7".repeat(64),
             title: "feat(excalibur): add MIGHT surface",
@@ -434,6 +437,8 @@ test("CLI uses the shared scoped conversation and replays SSE from the last curs
     await runtime.connect();
     assert.equal(runtime.resumeKey(), SESSION_ID);
     assert.match((await runtime.runControlCommand("orchestra", ["status", "mission-1"])).join("\n"), /Orchestra · unavailable/);
+    assert.match((await runtime.runControlCommand("orchestra", ["progress", "mission-1"])).join("\n"), /Orchestra · unavailable/);
+    assert.match((await runtime.runControlCommand("orchestra", ["prepare", "/private/tmp/mission-brief.json"])).join("\n"), /prepare locked/);
     assert.match((await runtime.runControlCommand("orchestra", ["advance", "mission-1", "d".repeat(64)])).join("\n"), /advance locked/);
     const runId = await runtime.sendMessage("show the shared pulse");
     assert.equal(runId, RUN_ID);
@@ -606,6 +611,180 @@ test("operator-local draft publication carries the hidden nonce through the brok
     await runtime.connect();
     const runId = await runtime.sendMessage("publish the exact approved head as a draft PR");
     assert.equal(await runtime.waitForFinal(2_000, runId || undefined), "final");
+    assert.equal(runtime.hasPendingApproval(), true);
+    assert.equal(await runtime.handleApprovalKey("a"), true);
+    assert.deepEqual(decisionBody, {
+        decision: "approved",
+        proposalDigest: "7".repeat(64),
+        confirmationNonce: CONFIRMATION_NONCE,
+    });
+    assert.equal(runtime.hasPendingApproval(), false);
+    await runtime.close();
+});
+test("/orchestra propose bridges the sealed Pattern A intent into the existing approval and receipt machinery", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "excalibur-orchestra-propose-")));
+    const stateRoot = join(root, "pattern-a-state");
+    const executable = join(root, "pattern-a-wrapper");
+    const config = join(root, "orchestra-config.json");
+    const details = join(root, "proposal-details.json");
+    const wrapperBytes = "#!/bin/sh\nexit 99\n";
+    const resourceSetDigest = "e".repeat(64);
+    await mkdir(stateRoot, { mode: 0o700 });
+    await chmod(stateRoot, 0o700);
+    await writeFile(executable, wrapperBytes, { mode: 0o700 });
+    await chmod(executable, 0o700);
+    await writeFile(details, JSON.stringify({
+        schema: "excalibur-pattern-a-publication-metadata/v1",
+        title: "exact bounded draft",
+        body: "Exact-head draft publication.",
+        labels: [],
+    }), { mode: 0o600 });
+    await writeFile(config, JSON.stringify({
+        schemaVersion: EXCALIBUR_ORCHESTRA_CONFIG_SCHEMA,
+        brokerExecutable: executable,
+        brokerSha256: createHash("sha256").update(wrapperBytes).digest("hex"),
+        resourceSetDigest,
+        stateRoot,
+    }), { mode: 0o600 });
+    const env = {
+        ...process.env,
+        HOME: root,
+        PATH: "/attacker-controlled/bin",
+        EXCALIBUR_STATE_DIR: join(root, "cli-state"),
+        EXCALIBUR_ORCHESTRA_CONFIG: config,
+    };
+    const proposed = draftProposal();
+    const intent = {
+        actionId: proposed.actionId,
+        target: proposed.target,
+        payload: proposed.payload,
+        idempotencyKey: proposed.idempotencyKey,
+    };
+    const publicationGateDigest = String(intent.payload.publicationGateDigest);
+    const preflightAttested = {
+        schema: EXCALIBUR_ORCHESTRA_PREFLIGHT_RESULT_SCHEMA,
+        available: true,
+        stateRootRealpath: stateRoot,
+        resourceSetDigest,
+    };
+    let preflightCalls = 0;
+    let intentCalls = 0;
+    const orchestraExecFileFn = async (invokedExecutable, argv, options) => {
+        assert.equal(invokedExecutable, executable);
+        assert.equal(options.env.EXCALIBUR_PATTERN_A_STATE_ROOT, stateRoot);
+        assert.doesNotMatch(String(options.env.PATH), /attacker-controlled/);
+        if (argv.length === 1 && argv[0] === "status") {
+            preflightCalls += 1;
+            assert.deepEqual(JSON.parse(String(options.input)), {
+                schema: EXCALIBUR_ORCHESTRA_PREFLIGHT_REQUEST_SCHEMA,
+                stateRootRealpath: stateRoot,
+                expectedResourceSetDigest: resourceSetDigest,
+            });
+            return {
+                stdout: JSON.stringify({
+                    ...preflightAttested,
+                    attestationDigest: canonicalDigest(preflightAttested),
+                }),
+                stderr: "",
+            };
+        }
+        intentCalls += 1;
+        assert.deepEqual(argv, [
+            "propose", "--mission-id", "pattern-a:mission-might-surface",
+            "--details", await realpath(details),
+        ]);
+        const { publicationGateDigest: _publicationGateDigest, ...boundPayload } = intent.payload;
+        return {
+            stdout: JSON.stringify({
+                intent,
+                intentDigest: canonicalDigest(intent),
+                publicationGateDigest,
+                actionBindingDigest: canonicalDigest({
+                    actionId: intent.actionId,
+                    target: intent.target,
+                    payload: boundPayload,
+                    idempotencyKey: intent.idempotencyKey,
+                }),
+            }),
+            stderr: "",
+        };
+    };
+    let proposalBody = null;
+    let decisionBody = null;
+    const fetchFn = async (input, init = {}) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/control/session"))
+            return json(controlSession("operator", "approval_bound"));
+        if (url.pathname.endsWith("/conversations") && init.method === "POST") {
+            return json(conversation(0, "operator"), 201);
+        }
+        if (url.pathname.endsWith("/control/snapshot"))
+            return json(controlSnapshot("operator"));
+        if (url.pathname.endsWith("/control/capabilities"))
+            return json(capabilities());
+        if (url.pathname.endsWith("/control/receipts"))
+            return json({ receipts: [] });
+        if (url.pathname.endsWith("/excalibur/memory"))
+            return json(memoryPosture("operator"));
+        if (url.pathname.endsWith("/control/proposals")) {
+            proposalBody = JSON.parse(String(init.body));
+            return json({
+                proposal: proposed,
+                approval: draftApproval(),
+                receipt: null,
+                replayed: false,
+            }, 201);
+        }
+        if (url.pathname.endsWith(`/control/approvals/${APPROVAL_ID}/decide`)) {
+            decisionBody = JSON.parse(String(init.body));
+            return json({
+                approval: draftApproval("approved"),
+                proposal: proposed,
+                receipt: draftReceipt(),
+                executionUnconfirmed: false,
+                replayed: false,
+            });
+        }
+        throw new Error(`unexpected synthetic request: ${url.pathname}`);
+    };
+    const transport = new ExcaliburHttpTransport({
+        baseUrl: "http://127.0.0.1:4178",
+        posture: "sidecar",
+        scope: { kind: "operator" },
+        accessToken: "synthetic-sidecar-token",
+        fetchFn,
+    });
+    const runtime = new ExcaliburSidecarRuntime({
+        env,
+        scope: operatorScope,
+        contextId: "operator-local",
+        transport,
+        orchestraExecFileFn: orchestraExecFileFn,
+        reconnectDelaysMs: [0],
+    });
+    await runtime.connect();
+    const intentPayload = intent.payload;
+    intentPayload.principalId = "another-operator";
+    const wrongPrincipal = await runtime.runControlCommand("orchestra", [
+        "propose", "pattern-a:mission-might-surface", details,
+    ]);
+    assert.match(wrongPrincipal.join("\n"), /broker provenance does not bind/);
+    assert.equal(proposalBody, null);
+    intentPayload.principalId = "operator-a";
+    intentPayload.sessionId = "90000000-0000-4000-8000-000000000009";
+    const wrongSession = await runtime.runControlCommand("orchestra", [
+        "propose", "pattern-a:mission-might-surface", details,
+    ]);
+    assert.match(wrongSession.join("\n"), /broker provenance does not bind/);
+    assert.equal(proposalBody, null);
+    intentPayload.sessionId = SESSION_ID;
+    const lines = await runtime.runControlCommand("orchestra", [
+        "propose", "pattern-a:mission-might-surface", details,
+    ]);
+    assert.match(lines.join("\n"), /publication proposal created/);
+    assert.deepEqual(proposalBody, { conversationId: SESSION_ID, intent });
+    assert.equal(preflightCalls, 4, "connect and every proposal attempt revalidate the sealed broker closure");
+    assert.equal(intentCalls, 3);
     assert.equal(runtime.hasPendingApproval(), true);
     assert.equal(await runtime.handleApprovalKey("a"), true);
     assert.deepEqual(decisionBody, {

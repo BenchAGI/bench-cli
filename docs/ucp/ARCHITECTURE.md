@@ -26,6 +26,7 @@ The UCP never merges, deploys, marks a PR ready, silently mutates a tenant, or s
 - **Draft is not merge, deploy, or live.** Those states require separate evidence and separate human authority.
 - **GateKeeper-materialized secrets never enter chat, argv, logs, traces, receipts, PR text, screenshots, or git.** An effect may receive such a value only inside its isolated child process after the GateKeeper ceremony. Input screening rejects credential-bearing keys and recognizable credential shapes, but it is not a universal secret classifier; operators must still keep arbitrary secret text out of ordinary content fields.
 - **A durable receipt marker is mandatory.** The registry must write `started` before the adapter runs. Unsafe receipt content is denied; if a final overwrite fails after an external effect, the surviving `started` marker is indeterminate and requires destination inspection.
+- **Packet prose is descriptive, not authority.** `goal`, `proof`, and `nonGoals` may document protected commands. A frozen packet remains powerless because its typed structure fixes `effects:"none"` and `credentials:"forbidden"` and rejects unsupported authority or credential fields.
 - **Gateway ownership remains intact.** Aurelius owns live OpenClaw gateway configuration and restarts. A Codex/Excalibur effect may mutate that surface only after an explicit Cory/Aurelius handoff and must record that handoff.
 
 ## 3. Truth model and source precedence
@@ -83,10 +84,10 @@ flowchart TB
   O["Light: intent + user presence"] --> G["1Password GateKeeper"]
   S["Excalibur session"] --> H["Session health card"]
   S --> R["Effect registry"]
-  S --> OP["/orchestra init | status | advance | propose"]
+  S --> OP["/orchestra prepare | status | progress | advance | propose"]
   OP --> OB["Pinned packaged Orchestra broker"]
   OB -->|"digest-bound live model dispatch"| OC["OpenClaw harness"]
-  OB -->|"publish-intent subprocess verb"| PI["Validated publication intent"]
+  OB -->|"propose: derive exact intent"| PI["Validated publication intent"]
   PI --> SC["Shared sidecar proposal + exact approval"]
   SC -->|"approved hidden nonce only"| GH["Canonical sidecar draft publisher"]
   H -. "operator reviews blockers" .-> R
@@ -100,6 +101,14 @@ flowchart TB
   A --> C["Mail draft path"]
   A --> W
 ```
+
+`/orchestra prepare <absolute-mission-brief-json>` reads a bounded,
+owner-private brief and wraps it with the authenticated control principal and
+active conversation ID before invoking the pinned broker. `prepare` and
+exact-digest `advance` require `effectsPosture:approval_bound`.
+`/orchestra status <mission-id>` and `/orchestra progress <mission-id>` are
+read-only; progress exposes only a bounded phase/task/round projection for the
+exact mission.
 
 ### Session health card
 
@@ -130,7 +139,7 @@ The fresh 2026-07-15T04:53:11Z proof used zero secret materializations and found
 | `publish-draft` | Reserved capability vocabulary; UCP registers no draft action | Ready-for-review, merge, release, deploy |
 | `outbound-draft` | Write one owner-private local `.eml` draft | Provider mutation, external send, or invite |
 
-Modes are additive requirements, not ambient roles. `mesh.preauth.mint` declares `secret-use` plus `mutate-tenant`. UCP registers neither `github.draft_pr.publish.v1` nor `git.publish_draft_pr`. `/orchestra propose <mission-id> <absolute-owner-private-details-json>` is the sole operator-facing publication handoff: it invokes the pinned broker's internal `publish-intent` verb and passes only the validated, digest-bound intent into the shared sidecar proposal/approval path. Direct invocation of either removed effect ID is not an approved UCP route and is denied by the operator guard. Other protected non-secret UCP executions require a grant bound to exact effect ID and request digest, plus fresh Touch ID at execution. Secret access requires per-access Touch ID. Durable mission bundles are disabled.
+Modes are additive requirements, not ambient roles. `mesh.preauth.mint` declares `secret-use` plus `mutate-tenant`. UCP registers neither the canonical sidecar draft action nor its retired legacy alias. `/orchestra propose <mission-id> <absolute-publication-metadata-json>` is the sole operator-facing publication handoff. Its owner-private metadata document contains exactly `schema:"excalibur-pattern-a-publication-metadata/v1"`, bounded `title`, bounded `body`, and `labels:[]`; the pinned broker derives the digest-bound intent and the CLI passes it into the shared sidecar proposal/approval path. Direct invocation of a removed draft effect is not an approved UCP route and is denied by the operator guard. Other protected non-secret UCP executions require a grant bound to exact effect ID and request digest, plus fresh Touch ID at execution. Secret access requires per-access Touch ID. Durable mission bundles are disabled.
 
 ## 7. GateKeeper and credential ceremony
 
@@ -168,7 +177,7 @@ Raw `op item get --format json` output is not an acceptable metadata probe becau
 
 ## 8. Effects and receipts
 
-Definitions own effect class, modes, dry-run behavior, secret posture, availability, and the primary hard-denial code. The registry enforces exact field sets and value-free input before adapters validate effect-specific targets. Health prerequisites are not a generic registry gate today. UCP exposes no GitHub draft-publication definition, adapter, or publication receipt. Live draft proposals begin only at `/orchestra propose`; the CLI calls the pinned broker's `publish-intent` verb, validates the returned intent and binding digests, and submits that intent to the shared sidecar. Only the sidecar's exact approval path can reach its canonical draft publisher.
+Definitions own effect class, modes, dry-run behavior, secret posture, availability, and the primary hard-denial code. The registry enforces exact field sets and value-free input before adapters validate effect-specific targets. Health prerequisites are not a generic registry gate today. UCP exposes no GitHub draft-publication definition, adapter, or publication receipt. Live draft proposals begin only at `/orchestra propose`; the CLI validates the exact metadata file plus the broker's returned intent and binding digests, then submits that intent to the shared sidecar. Only the sidecar's exact approval path can reach its canonical draft publisher.
 
 The default receipt path is `~/.local/state/excalibur/ucp/state/effects/<receiptId>.json`; `EXCALIBUR_UCP_STATE_DIR` may replace the root. Receipts are mode `0600` under mode-`0700` directories and use schema `excalibur.ucp.v1`.
 

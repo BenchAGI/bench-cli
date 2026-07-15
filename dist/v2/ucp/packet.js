@@ -5,7 +5,6 @@ import { requestDigest } from "./receipts.js";
 import { UcpDeniedError } from "./types.js";
 export const SEAT_PACKET_SCHEMA_VERSION = "excalibur.seat-packet.v1";
 const MAX_PACKET_BYTES = 128 * 1024;
-const PROTECTED_ACTIVE_INTENT = /(?:\bgit\s+push\b|\bgh\s+pr\s+(?:create|ready|merge)\b|\b(?:ssh|scp|sftp)\b|\b(?:deploy|merge|ready\s+(?:the\s+)?pr|send\s+(?:an?\s+)?(?:email|mail|message)|invite|publish\s+(?:to\s+)?production|force[- ]?push|access\s+(?:a\s+)?secret|retrieve\s+(?:a\s+)?credential)\b)/i;
 const SECRET_SHAPE = /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bgh[opsu]_[A-Za-z0-9_]{20,}\b|\bAKIA[0-9A-Z]{16}\b|\bBearer\s+[A-Za-z0-9._~-]{20,})/;
 const SENSITIVE_PATH_SEGMENT = /^(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.1password|keychains?)$/i;
 function boundedText(value, label, maximum = 4_000) {
@@ -49,9 +48,6 @@ export function createSeatPacket(value, now = new Date()) {
         throw new UcpDeniedError("SEAT_PACKET_FIELD_DENIED", "Seat packet contains unsupported fields");
     const goal = boundedText(input.goal, "goal");
     const proof = textList(input.proof, "proof", 1, 20);
-    if (PROTECTED_ACTIVE_INTENT.test(goal) || proof.some((item) => PROTECTED_ACTIVE_INTENT.test(item))) {
-        throw new UcpDeniedError("UNBOUNDED_ORCHESTRA_PACKET_DENIED", "Seat goal/proof requests a protected external effect");
-    }
     const nonGoals = textList(input.nonGoals, "nonGoals", 1, 20);
     const maxFiles = Number(input.maxFiles);
     if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 50) {
@@ -93,13 +89,10 @@ export function validateSeatPacket(value, now = new Date()) {
         || packet.credentials !== "forbidden") {
         throw new UcpDeniedError("SEAT_PACKET_INVALID", "Frozen seat packet schema is invalid");
     }
-    const goal = boundedText(packet.goal, "goal");
+    boundedText(packet.goal, "goal");
     repoPaths(packet.repoPaths);
     textList(packet.nonGoals, "nonGoals", 1, 20);
-    const proof = textList(packet.proof, "proof", 1, 20);
-    if (PROTECTED_ACTIVE_INTENT.test(goal) || proof.some((item) => PROTECTED_ACTIVE_INTENT.test(item))) {
-        throw new UcpDeniedError("UNBOUNDED_ORCHESTRA_PACKET_DENIED", "Frozen seat goal/proof requests a protected external effect");
-    }
+    textList(packet.proof, "proof", 1, 20);
     if (!Number.isInteger(packet.maxFiles) || packet.maxFiles < 1 || packet.maxFiles > 50) {
         throw new UcpDeniedError("SEAT_PACKET_MAX_FILES_INVALID", "Frozen maxFiles is invalid");
     }

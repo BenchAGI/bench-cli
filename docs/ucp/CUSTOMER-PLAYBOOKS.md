@@ -14,6 +14,7 @@
 - Keep customer content, names, emails, deal notes, and record bodies out of documentation and receipts. Adapters may persist only bounded operational identifiers needed for audit, such as `instanceId`, principal, user/node/tag references, or a private draft path.
 - Every secret materialization requires the GateKeeper ceremony. If a future key-delivery broker is added, the key must go directly to its consumer and never render in the terminal; the current mesh mint path creates no key.
 - Grants for protected non-secret modes require a matching successful dry-run receipt from the prior 15 minutes and bind its receipt ID, exact effect ID, and request digest. Durable mission bundles are disabled; secret use remains per-access.
+- Frozen packet prose is documentary. It may quote protected commands; authority remains structurally absent because packets fix `effects:"none"` and `credentials:"forbidden"` and reject unsupported authority or credential fields.
 - A recap is a draft until a human approves a separate send.
 - A pull request remains draft until a human-controlled land path takes over. Merge, deploy, and live proof are separate states.
 - If the human markdown, JSON companion, registry definition, and adapter disagree, execution fails closed. The implemented definition/adapter is the authority for what can run; the docs must then be repaired.
@@ -148,7 +149,7 @@ A discovery or onboarding call becomes a factual internal packet and a human-rev
 
 1. Run `session.health_card` and confirm the session can prepare local artifacts.
 2. Create a bounded packet with goals, facts, decisions, risks, owners, and follow-ups. Separate observed facts from assumptions.
-3. Use `packet.freeze` to validate that the packet contains no credentials or effects. Put “send” in `nonGoals`, not active `goal`/`proof`, because those fields conservatively reject protected-effect intent.
+3. Use `packet.freeze` to validate that the packet contains no credentials or effects. `goal`, `proof`, and `nonGoals` may document why send is prohibited; the structural `effects:"none"` and `credentials:"forbidden"` fields—not substring screening—remove authority.
 4. Run `mail.doctor`. It checks only the configured local draft directory; it does not inspect a mailbox or provider identity.
 5. Dry-run `mail.draft`, then issue an `outbound-draft` grant with that receipt ID and its exact `requestDigest`. Use the same request with `--grant <id> --execute`. Grant issuance and protected execution each require Touch ID. The result is an owner-private local `.eml`; there is no provider-hosted draft path.
 6. Have a human review customer facts, commitments, recipients, tone, and attachments.
@@ -188,10 +189,10 @@ A customer pain point becomes a bounded Pattern A implementation packet and a ve
 
 1. Convert the pain point into a privacy-minimized intake: problem, expected outcome, repository, allowed paths, non-goals, maximum files, tests, and proof.
 2. Run `worktree.prepare` with absolute repository/worktree paths, an operator-approved base ref, and a new `codex/` branch. This adapter does not carry a business repository allowlist or base-SHA field; the later draft proposal separately enforces an allowlisted GitHub organization and exact SHAs.
-3. Run `packet.freeze`; place merge/deploy/send/secret prohibitions in `nonGoals`. Frozen packets force `effects:"none"` and `credentials:"forbidden"`.
-4. Initialize the mission with `/orchestra init <absolute-mission-json>`, then use `/orchestra advance <mission-id> <exact-mission-digest>` for each legal transition. UCP `seat.dispatch` is a fail-closed compatibility validator and cannot invoke a model.
+3. Run `packet.freeze`; document merge/deploy/send/secret prohibitions where they are useful. Frozen packets force `effects:"none"` and `credentials:"forbidden"`, so documentary command prose does not grant authority.
+4. In an authenticated active approval-bound conversation, run `/orchestra prepare <absolute-mission-brief-json>`. The owner-private brief is parsed and wrapped by the CLI with schema `excalibur-pattern-a-prepare-request-v1`, the authenticated principal, and active session ID; the broker derives the mission and isolated worktrees. Inspect it with read-only `/orchestra status <mission-id>` and `/orchestra progress <mission-id>`, then use approval-bound `/orchestra advance <mission-id> <exact-mission-digest>` for each legal transition. UCP `seat.dispatch` is a fail-closed compatibility validator and cannot invoke a model.
 5. Implement and test locally. Record exact gates and residuals.
-6. After `ANVIL_GATED`, run `/orchestra propose <mission-id> <absolute-owner-private-details-json>`. UCP registers neither `github.draft_pr.publish.v1` nor `git.publish_draft_pr` and has no draft-publication receipt. The CLI invokes the pinned broker's internal `publish-intent` verb and validates its digest-bound result before asking the shared sidecar for a proposal.
+6. After `ANVIL_GATED`, write an owner-private publication metadata file containing exactly `schema:"excalibur-pattern-a-publication-metadata/v1"`, bounded `title`, bounded `body`, and `labels:[]`; then run `/orchestra propose <mission-id> <absolute-publication-metadata-json>`. UCP registers neither the canonical sidecar action nor the retired legacy draft alias and has no draft-publication receipt. The CLI validates the metadata and broker's digest-bound result before asking the shared sidecar for a proposal; only the sidecar can execute after exact approval.
 7. Review the exact identity-bound sidecar approval card; only its `[A]` path can consume the hidden single-use nonce. Direct invocation of either removed draft-publication ID is denied by the operator guard.
 8. Require the deterministic draft-PR receipt from the shared sidecar.
 9. `github.watch_checks` is a GateKeeper-protected read by repository, PR number, and exact `expectedHeadSha`. It denies if GitHub's current PR head differs before returning that commit's checks.

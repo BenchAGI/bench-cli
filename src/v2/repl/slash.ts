@@ -46,7 +46,7 @@ export const EXCALIBUR_SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "might", summary: "Show MIGHT posture and capability-specific health" },
   {
     name: "orchestra",
-    usage: "/orchestra init <absolute-mission-json> | status <mission-id> | advance <mission-id> <exact-mission-digest> | propose <mission-id> <absolute-details-json>",
+    usage: "/orchestra prepare <absolute-mission-brief-json> | status <mission-id> | progress <mission-id> | advance <mission-id> <exact-mission-digest> | propose <mission-id> <absolute-publication-metadata-json>",
     summary: "Run one pinned Pattern A mission through its exact draft-publication proposal",
   },
   { name: "pulse", summary: "Show the authoritative Pulse observation" },

@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -14,6 +26,7 @@ import {
   EXCALIBUR_LAUNCHER_SCHEMA,
   inspectExcaliburLaunchers,
   parseCanonicalLauncherManifest,
+  verifyBundledRuntimeClosure,
   verifyCanonicalLauncherManifest,
 } from "../excalibur/launcher-integrity.js";
 import {
@@ -26,7 +39,7 @@ const execFileAsync = promisify(execFile);
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDirectory, "../../..");
 const cliEntry = join(repositoryRoot, "bin", "excalibur.mjs");
-const launchCommand = `#!/usr/bin/env bash
+const launchCommand = `#!/bin/bash
 RESOURCE_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 APP_BUNDLE="$(cd "$RESOURCE_DIR/../.." && pwd)"
 CLI_NODE="$RESOURCE_DIR/runtime/node"
@@ -79,6 +92,83 @@ async function writeSyntheticRuntime(resources: string): Promise<string> {
   return await realpath(entry);
 }
 
+async function createAuditableRuntime(prefix: string): Promise<{ root: string; runtime: string }> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  const resources = join(root, "Excalibur One Surface.app", "Contents", "Resources");
+  await mkdir(resources, { recursive: true });
+  await writeSyntheticRuntime(resources);
+  return { root, runtime: join(resources, "runtime") };
+}
+
+test("bundled runtime closure permits relative internal node_modules links", async () => {
+  const { runtime } = await createAuditableRuntime("excalibur-runtime-links-");
+  const packageBin = join(runtime, "cli", "node_modules", "fixture", "bin");
+  const dotBin = join(runtime, "cli", "node_modules", ".bin");
+  await Promise.all([mkdir(packageBin, { recursive: true }), mkdir(dotBin, { recursive: true })]);
+  await writeFile(join(packageBin, "fixture.js"), "export {};\n", { mode: 0o644 });
+  await symlink("../fixture/bin/fixture.js", join(dotBin, "fixture"));
+
+  const verified = await verifyBundledRuntimeClosure(runtime);
+  assert.equal(verified.symlinkCount, 1);
+});
+
+test("bundled runtime closure rejects absolute, escaping, chained, and dangling links", async (t) => {
+  await t.test("absolute", async () => {
+    const { runtime } = await createAuditableRuntime("excalibur-runtime-absolute-");
+    await symlink(process.execPath, join(runtime, "cli", "absolute-link"));
+    await assert.rejects(verifyBundledRuntimeClosure(runtime), /absolute symlink/);
+  });
+
+  await t.test("relative escape", async () => {
+    const { root, runtime } = await createAuditableRuntime("excalibur-runtime-escape-");
+    const outside = join(root, "outside.js");
+    const linkPath = join(runtime, "cli", "escaping-link");
+    await writeFile(outside, "outside\n");
+    await symlink(relative(dirname(linkPath), outside), linkPath);
+    await assert.rejects(verifyBundledRuntimeClosure(runtime), /lexically escaping symlink/);
+  });
+
+  await t.test("canonical chain escape", async () => {
+    const { root, runtime } = await createAuditableRuntime("excalibur-runtime-chain-");
+    const outside = join(root, "outside.js");
+    const chainTarget = join(runtime, "cli", "chain-target");
+    const chainEntry = join(runtime, "cli", "chain-entry");
+    await writeFile(outside, "outside\n");
+    await symlink(relative(dirname(chainTarget), outside), chainTarget);
+    await symlink("chain-target", chainEntry);
+    await assert.rejects(verifyBundledRuntimeClosure(runtime), /escaping symlink/);
+  });
+
+  await t.test("dangling", async () => {
+    const { runtime } = await createAuditableRuntime("excalibur-runtime-dangling-");
+    await symlink("missing-target", join(runtime, "cli", "dangling-link"));
+    await assert.rejects(verifyBundledRuntimeClosure(runtime), /broken or escaping symlink/);
+  });
+});
+
+test("bundled Node and CLI entry must be sealed regular single-link files", async (t) => {
+  await t.test("mutable Node", async () => {
+    const { runtime } = await createAuditableRuntime("excalibur-runtime-mutable-");
+    await chmod(join(runtime, "node"), 0o777);
+    await assert.rejects(verifyBundledRuntimeClosure(runtime), /non-mutable, single-link regular file/);
+  });
+
+  await t.test("symlinked Node", async () => {
+    const { runtime } = await createAuditableRuntime("excalibur-runtime-node-link-");
+    const node = join(runtime, "node");
+    await unlink(node);
+    await symlink("cli/bin/excalibur.mjs", node);
+    await assert.rejects(verifyBundledRuntimeClosure(runtime));
+  });
+
+  await t.test("hard-linked entry", async () => {
+    const { runtime } = await createAuditableRuntime("excalibur-runtime-hardlink-");
+    const entry = join(runtime, "cli", "bin", "excalibur.mjs");
+    await link(entry, join(runtime, "cli", "bin", "entry-alias.mjs"));
+    await assert.rejects(verifyBundledRuntimeClosure(runtime), /single-link regular file/);
+  });
+});
+
 test("canonical launcher manifest binds exact CLI, digests, sidecar gate, and no provider fallback", async () => {
   const root = await mkdtemp(join(tmpdir(), "excalibur-launcher-"));
   const resources = join(root, "Excalibur One Surface.app", "Contents", "Resources");
@@ -130,6 +220,8 @@ test("launcher discovery calls the old CLI Preview noncanonical and recognizes o
 
 test("packaged launcher has no PATH or direct-provider fallback and gates every click with doctor", async () => {
   const script = await readFile(join(repositoryRoot, "scripts", "make-excalibur-app.sh"), "utf8");
+  assert.match(script, /^#!\/bin\/bash\n/);
+  assert.match(script, /<<LAUNCH\n#!\/bin\/bash\n/);
   assert.match(script, /doctor --launch-check/);
   assert.match(script, /directProviderLaunch: false/);
   assert.match(script, /bin\/excalibur\.mjs/);
@@ -139,6 +231,67 @@ test("packaged launcher has no PATH or direct-provider fallback and gates every 
   assert.match(script, /resolveOrchestraBrokerConfig/);
   assert.match(script, /RUNTIME\/cli\/node_modules/);
   assert.match(script, /codesign --verify --deep --strict/);
+  assert.match(script, /verifyBundledRuntimeClosure/);
+  assert.match(script, /mktemp -d "\$APP_DIR\/\.excalibur-app-stage\.XXXXXX"/);
+  assert.doesNotMatch(script, /codesign --force --deep --sign - "\$APP"[^\n]*\|\| true/);
+  const signAt = script.indexOf('/usr/bin/codesign --force --deep --sign - "$APP"');
+  const stagedVerifyAt = script.indexOf('/usr/bin/codesign --verify --deep --strict "$APP"');
+  const moveAt = script.indexOf('if ! mv "$APP" "$TARGET_APP"');
+  assert.ok(signAt >= 0 && stagedVerifyAt > signAt && moveAt > stagedVerifyAt);
+});
+
+test("packager rejects a symlinked CLI_NODE before executing or copying it", {
+  skip: process.platform !== "darwin",
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "excalibur-symlinked-node-"));
+  const nodeLink = join(root, "node-link");
+  await symlink(process.execPath, nodeLink);
+  await assert.rejects(
+    execFileAsync("/bin/bash", [join(repositoryRoot, "scripts", "make-excalibur-app.sh")], {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        EXCALIBUR_APP_DIR: join(root, "apps"),
+        EXCALIBUR_CLI_NODE: nodeLink,
+        EXCALIBUR_CLI_ENTRY: cliEntry,
+      },
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    }),
+    /EXCALIBUR_CLI_NODE must not be a symlink/,
+  );
+});
+
+test("packager rejects mutable and multiply-linked CLI_NODE inputs before execution", {
+  skip: process.platform !== "darwin",
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "excalibur-unsafe-node-"));
+  const mutableNode = join(root, "mutable-node");
+  await writeFile(mutableNode, "#!/bin/sh\nexit 99\n", { mode: 0o777 });
+  await chmod(mutableNode, 0o777);
+  const invoke = async (nodePath: string) => await execFileAsync(
+    "/bin/bash",
+    [join(repositoryRoot, "scripts", "make-excalibur-app.sh")],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        EXCALIBUR_APP_DIR: join(root, "apps"),
+        EXCALIBUR_CLI_NODE: nodePath,
+        EXCALIBUR_CLI_ENTRY: cliEntry,
+      },
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  await assert.rejects(invoke(mutableNode), /must not be group\/world writable/);
+
+  const linkedNode = join(root, "linked-node");
+  const linkedAlias = join(root, "linked-node-alias");
+  await writeFile(linkedNode, "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+  await chmod(linkedNode, 0o755);
+  await link(linkedNode, linkedAlias);
+  await assert.rejects(invoke(linkedNode), /must be a single-link file/);
 });
 
 test("staged canonical app path-binds a validated orchestra config without copying it", {
@@ -195,7 +348,17 @@ fi
 
   const app = join(appDirectory, "Excalibur One Surface.app");
   const resources = join(app, "Contents", "Resources");
+  await execFileAsync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  const bundledNodeInfo = await lstat(join(resources, "runtime", "node"));
+  const bundledEntryInfo = await lstat(join(resources, "runtime", "cli", "bin", "excalibur.mjs"));
+  assert.equal(bundledNodeInfo.isFile(), true);
+  assert.equal(bundledNodeInfo.isSymbolicLink(), false);
+  assert.equal(bundledNodeInfo.nlink, 1);
+  assert.equal(bundledEntryInfo.isFile(), true);
+  assert.equal(bundledEntryInfo.isSymbolicLink(), false);
+  assert.equal(bundledEntryInfo.nlink, 1);
   const command = await readFile(join(resources, "launch.command"), "utf8");
+  assert.match(command, /^#!\/bin\/bash\n/);
   const canonicalConfig = await realpath(config);
   assert.match(command, /doctor --launch-check/);
   assert.match(command, new RegExp(`export EXCALIBUR_ORCHESTRA_CONFIG=${canonicalConfig.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));

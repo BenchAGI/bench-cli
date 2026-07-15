@@ -195,23 +195,44 @@ If the process crashes after the pre-effect write, the durable `started` receipt
 | `seat.dispatch` | `packetPath`, `seat` | Legacy dry-run validation only. Execute returns `CANONICAL_ORCHESTRA_BROKER_REQUIRED`; no model or transport is invoked. |
 | `stamp.roster` | `outputPath`, `packetDigest` | Writes one new owner-private JSON stamp beneath UCP `state/stamps`; it will not replace a file and has no remote PR-comment/body attachment path. |
 
-Protected-effect language belongs in packet `nonGoals`. The current packet validator uses a conservative text pattern in `goal` and `proof`; it can reject quoted discussion and is not a semantic tool/target parser. This is a validation residual, but `seat.dispatch` still cannot invoke a model. Live Pattern A dispatch belongs only to the packaged `/orchestra` broker: `/orchestra init <absolute-mission-json>`, `/orchestra status <mission-id>`, and `/orchestra advance <mission-id> <exact-mission-digest>`.
+Packet prose is descriptive, not authority: `goal`, `proof`, and `nonGoals` may
+quote or document protected commands without substring classification. The
+frozen structure still fixes `effects: "none"` and `credentials: "forbidden"`,
+rejects credential-shaped material and unsupported typed fields, and
+`seat.dispatch` remains a ceremony stub that cannot invoke a model. Live
+Pattern A dispatch belongs only to the packaged `/orchestra` broker.
+
+The public Orchestra contract is:
+
+- `/orchestra prepare <absolute-mission-brief-json>` parses one bounded,
+  owner-private brief and sends the pinned broker a canonical wrapper containing
+  schema `excalibur-pattern-a-prepare-request-v1`, the authenticated principal,
+  the active conversation ID, and the brief. It derives the mission and
+  isolated worktrees and requires an approval-bound session.
+- `/orchestra status <mission-id>` and `/orchestra progress <mission-id>` are
+  read-only. Status reports bounded state/digest/receipt counts; progress reports
+  the exact mission's bounded phase/task/round projection.
+- `/orchestra advance <mission-id> <exact-mission-digest>` is approval-bound and
+  runs only the digest-confirmed next wave.
 
 ### GitHub
 
-UCP registers neither `github.draft_pr.publish.v1` nor
-`git.publish_draft_pr`; it exposes no draft-publication adapter or publication
-receipt. The sole operator-facing entry is
-`/orchestra propose <mission-id> <absolute-owner-private-details-json>`. That
-command invokes the pinned Pattern A broker with its internal `publish-intent`
-verb, validates the exact intent, intent digest, publication-gate digest, and
-action-binding digest, then submits the intent to the shared sidecar. Direct
+UCP does not register the canonical GitHub draft action or its retired legacy
+alias; it exposes no draft-publication adapter or publication receipt. The sole operator-facing entry is
+`/orchestra propose <mission-id> <absolute-publication-metadata-json>`. The
+owner-private metadata document contains exactly
+`schema:"excalibur-pattern-a-publication-metadata/v1"`, bounded `title`, bounded
+`body`, and `labels:[]`. The CLI validates the metadata plus the exact intent,
+intent digest, publication-gate digest, and action-binding digest returned by
+the pinned broker, then submits the intent to the shared sidecar. Direct
 invocation of either removed UCP effect ID is denied by the operator guard.
 Live publication exists only behind the sidecar's validated proposal, exact
 human approval nonce, and `excalibur.sidecar.github-draft-pr.v1`
 deterministic executor. Merge, ready-for-review, release, and deploy are
 separate and absent authorities.
-The sidecar receipt, never the action payload, carries the kernel-read GitHub
+The action payload binds the authenticated control `principalId` and active
+conversation `sessionId`; the sidecar rejects either mismatch before any
+publisher or provider read. The sidecar receipt, never the action payload, carries the kernel-read GitHub
 `publisherPrincipal`, numeric `publisherPrincipalId`, `publisherConfigDigest`,
 and `publisherIdentityAttestationDigest`. Mission and publication-gate fields
 remain payload-only.
@@ -273,7 +294,6 @@ The fresh health card observed HTTP 200 from both public control and DERP edges 
 | `GITHUB_CHECKS_HEAD_MISMATCH` | Live PR head differs from the exact reviewed SHA |
 | `MAIL_SEND_SECOND_GRANT_PATH_NOT_SHIPPED` | External mail send is deliberately hard denied |
 | `UCP_OUTPUT_PATH_DENIED` / `SEAT_PACKET_OUTPUT_EXISTS` / `UCP_OUTPUT_EXISTS` | A local packet/stamp path escaped its state bucket or would replace a file |
-| `UNBOUNDED_ORCHESTRA_PACKET_DENIED` | Packet goal/proof requested a protected external effect |
 
 Broad operator denials remain correct outside these typed routes. Wrapping a protected action in a shell, seat packet, or other effect does not inherit authority.
 
@@ -282,10 +302,10 @@ Broad operator denials remain correct outside these typed routes. Wrapping a pro
 Verified on the current stabilized tree:
 
 - build passed;
-- the current UCP suite passed 21/21, covering GateKeeper, grant-store digest/expiry/bundle bounds, full receipt validation, tenant binding and bulk/placeholder denial, typed input, scrubbed child environments, health's non-ambient probes, packet schema/digest/intent, the absence of UCP draft-publication IDs, and the seat/mail fail-closed boundaries;
-- `ucp-smoke.sh` passed the local UCP suite; draft publication is absent from UCP and enters only through `/orchestra propose`, whose pinned broker subprocess verb is `publish-intent`;
-- the full v2 suite passed 321/321, package smoke passed 42/42, and the package canary passed;
-- the Aurelius guard and launcher suite passed 35/35, with exact 19/19 non-hard-denied effect-set parity against the CLI and direct draft-publication IDs denied;
+- the current UCP suite passed 21/21, covering GateKeeper, grant-store digest/expiry/bundle bounds, full receipt validation, tenant binding and bulk/placeholder denial, typed input, scrubbed child environments, health's non-ambient probes, packet schema/digest/structural authority, the absence of UCP draft-publication IDs, and the seat/mail fail-closed boundaries;
+- `ucp-smoke.sh` passed the local UCP suite; draft publication is absent from UCP and enters only through exact `/orchestra propose` metadata and the shared sidecar;
+- the full v2 suite passed 337/337, package smoke passed 42/42, and the package canary passed;
+- the Aurelius Pattern A, operator guard, launcher, adapter, and packager suite passed 74/74, with exact 19/19 non-hard-denied effect-set parity against the CLI and direct draft-publication IDs denied;
 - a fresh 2026-07-15T04:53:11Z health card ran with zero `secretUses`, no open grants, nine blockers, and `fullyReady:false`;
 - the card observed `node:macbook` at `100.64.0.1`, OpenClaw HTTP 200 but locked/unauthed, memory unreachable, Bench `missing_config`, mesh control+DERP HTTP 200 but locked, GateKeeper/GitHub/MCP locked, and operator policy missing.
 
@@ -303,8 +323,8 @@ Not proven or not performed:
 
 | TD2 boundary | Implemented route | Current evidence boundary |
 |---|---|---|
-| `GIT_PUSH_DENIED` | `/orchestra propose` → pinned broker `publish-intent` → shared sidecar `github.draft_pr.publish.v1` | UCP has no draft-publication ID or executor; live authority belongs exclusively to the sidecar's exact proposal/approval broker |
-| `UNBOUNDED_ORCHESTRA_PACKET_DENIED` | `packet.freeze` + `/orchestra init|advance` | UCP may freeze locally; only the digest-bound Pattern A broker may dispatch seats |
+| `GIT_PUSH_DENIED` | `/orchestra propose` → shared sidecar `github.draft_pr.publish.v1` | UCP and Orchestra have no draft-publication executor; live authority belongs exclusively to the sidecar's exact proposal/approval broker |
+| `UNBOUNDED_ORCHESTRA_PACKET_DENIED` | structurally effects-none `packet.freeze` + approval-bound `/orchestra prepare|advance` | Packet prose may document protected commands, but packets cannot carry effects or credentials; only the digest-bound Pattern A broker may dispatch seats |
 | `OUTBOUND_MESSAGE_DENIED` | `mail.doctor` + local `mail.draft` | Local adapters shipped; `mail.send` hard denied |
 | `REMOTE_HOST_EFFECT_DENIED` | `mesh.*` | Public probes returned HTTP 200 while health stayed locked; admin verify unproven; mint stub only |
 | `SECRET_MANAGER_ACCESS_DENIED` | GateKeeper + `op://` refs | Implementation present; real ceremony unproven |

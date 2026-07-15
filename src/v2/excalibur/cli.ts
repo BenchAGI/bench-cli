@@ -672,7 +672,7 @@ async function runDoctor(
   const orchestra = await resolveOrchestraBrokerConfig(env);
   if ("reason" in orchestra) {
     println(c.yellow(`⚠ Pattern A orchestra unavailable: ${orchestra.reason}`));
-    println(c.dim("  /orchestra init|status|advance|propose invokes no fallback"));
+    println(c.dim("  /orchestra prepare|status|progress|advance|propose invokes no fallback"));
   } else {
     println(c.green(`✓ Pattern A orchestra broker verified: ${orchestra.executable}`));
     println(c.dim(`  owner-private config: ${orchestra.configPath}`));

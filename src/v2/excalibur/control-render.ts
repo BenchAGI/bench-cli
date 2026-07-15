@@ -122,6 +122,8 @@ export function renderApprovalCard(proposal: ExcaliburProposal, approval: Excali
     const changedPathsDigest = safeText(proposal.payload.changedPathsDigest, 64);
     const packetDigest = safeText(proposal.payload.packetDigest, 64);
     const missionId = safeText(proposal.payload.missionId, 128);
+    const principalId = safeText(proposal.payload.principalId, 160);
+    const sessionId = safeText(proposal.payload.sessionId, 160);
     const missionDigest = safeText(proposal.payload.missionDigest, 64);
     const publicationGateDigest = safeText(proposal.payload.publicationGateDigest, 64);
     const titleJson = JSON.stringify(String(proposal.payload.title));
@@ -136,6 +138,7 @@ export function renderApprovalCard(proposal: ExcaliburProposal, approval: Excali
     );
     lines.push(`  repository: ${repository}`);
     lines.push(`  mission: ${missionId} @ ${missionDigest}`);
+    lines.push(`  authority: principal ${principalId} · session ${sessionId}`);
     lines.push(`  publication gate: ${publicationGateDigest}`);
     lines.push(`  base: ${baseRef} @ ${baseSha}`);
     lines.push(`  head: ${headRef} @ ${headSha}`);

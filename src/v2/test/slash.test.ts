@@ -110,4 +110,5 @@ test("Excalibur registry and help expose the complete aggregate parity surface",
     assert.equal(findCommand(name, registry)?.name, name);
     assert.match(help, new RegExp(`/${name}(?:\\s|$)`));
   }
+  assert.match(help, /\/orchestra prepare .* progress .* advance .* propose/);
 });

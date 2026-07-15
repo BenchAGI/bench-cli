@@ -28,24 +28,33 @@ test("bounded seat packet freezes with effects none, credentials forbidden, and 
   assert.equal((await stat(path)).mode & 0o077, 0);
 });
 
-test("active protected intent and unsupported schema fields remain denied", () => {
-  assert.throws(() => createSeatPacket({ ...boundedInput(), goal: "Deploy this and merge the PR." }), /protected external effect/);
-  assert.throws(() => createSeatPacket({ ...boundedInput(), proof: ["git push origin main"] }), /protected external effect/);
+test("discussion of protected commands is allowed while effect and credential fields remain impossible", () => {
+  const packet = createSeatPacket({
+    ...boundedInput(),
+    goal: "Document why gh pr create is forbidden from an effects-none seat.",
+    proof: ["Explain why git push origin main must remain outside this packet."],
+  });
+  assert.match(packet.goal, /gh pr create/);
+  assert.match(packet.proof[0] || "", /git push/);
+  assert.equal(packet.effects, "none");
   assert.throws(() => createSeatPacket({ ...boundedInput(), repoPaths: ["/Users/operator/.ssh"] }), /credential or key-store/);
   assert.throws(() => createSeatPacket({ ...boundedInput(), credentials: ["op://vault/item/field"] }), /unsupported fields/);
+  assert.throws(() => createSeatPacket({ ...boundedInput(), effects: "mail.send" }), /unsupported fields/);
   assert.throws(() => createSeatPacket({ ...boundedInput(), maxFiles: 500 }), /1 to 50/);
 });
 
-test("frozen packet validation rechecks intent and the bounded expiry after digest verification", () => {
+test("frozen packet validation accepts documentary prose but rechecks structural locks and expiry", () => {
   const now = new Date("2026-07-14T12:00:00.000Z");
   const packet = createSeatPacket(boundedInput(), now);
   const rehash = <T extends typeof packet>(value: T): T => {
     const { packetDigest: _oldDigest, ...unsigned } = value;
     return { ...value, packetDigest: requestDigest(unsigned) };
   };
+  const documentary = rehash({ ...packet, goal: "Document why git push origin main is forbidden." });
+  assert.equal(validateSeatPacket(documentary, now).goal, documentary.goal);
   assert.throws(
-    () => validateSeatPacket(rehash({ ...packet, goal: "git push origin main" }), now),
-    /protected external effect/,
+    () => validateSeatPacket(rehash({ ...packet, effects: "mail.send" as never }), now),
+    /schema is invalid/,
   );
   assert.throws(
     () => validateSeatPacket(rehash({ ...packet, expiresAt: "not-a-date" }), now),

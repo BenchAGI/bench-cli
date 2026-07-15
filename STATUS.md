@@ -11,9 +11,9 @@ Reported results:
 
 - CLI build: **PASS**.
 - UCP suite: **21/21 PASS**.
-- Full v2 regression suite: **321/321 PASS**; package smoke: **42/42 PASS**; package canary: **PASS**.
+- Full v2 regression suite: **337/337 PASS**; package smoke: **42/42 PASS**; package canary: **PASS**.
 - `scripts/ucp-smoke.sh`: **PASS** for local UCP boundaries; no draft-publication action is registered there.
-- Aurelius operator guard and launcher suite: **35/35 PASS**.
+- Aurelius Pattern A, operator guard, launcher, adapter, and packager suite: **74/74 PASS**.
 - Guard/CLI non-hard-denied effect-set parity: **19/19 exact**; direct draft-publication effect IDs are denied.
 - Fresh `excalibur health`: **PASS** at `2026-07-15T04:53:11Z`; it reported nine blockers, zero secret uses, and no open grants.
 
@@ -53,10 +53,10 @@ Default receipt location is `~/.local/state/excalibur/ucp/state/effects/<receipt
 | Grants | `IMPLEMENTED · PARTIAL UNIT COVERAGE · LOCAL TRUST` | Exact effect/digest, owner-private storage, expiry ≤900 seconds, edited-window bounds, and disabled mission bundles are tested; CLI matching-receipt issuance is implemented but lacks a direct end-to-end unit test; records are unsigned and owner-writable |
 | Session health card | `IMPLEMENTED · RAN` | Conversation boot/resume and explicit `excalibur health` derive the MacBook node and expose blockers instead of claiming readiness |
 | GateKeeper | `IMPLEMENTED · TESTED · LIVE UNPROVEN` | Health uses no-prompt LocalAuthentication availability; protected execute requires fresh Touch ID and isolates `op run --env-file=/dev/fd/3 -- child`; no real Touch ID/1Password effect was run |
-| Frozen seat packet | `IMPLEMENTED · CORE TESTED` | Schema, `effects:"none"`, `credentials:"forbidden"`, digest, private write, bounded fields, expiry, and protected-intent denial are tested; adapter state-bucket and replacement denial are source-inspected rather than directly exercised |
+| Frozen seat packet | `IMPLEMENTED · CORE TESTED` | Schema, `effects:"none"`, `credentials:"forbidden"`, digest, private write, bounded fields, expiry, documentary protected-command prose, and structural authority denial are tested; adapter state-bucket and replacement denial are source-inspected rather than directly exercised |
 | `seat.dispatch` | `CEREMONY STUB` | Legacy UCP dry-run validates a frozen packet; execute denies `CANONICAL_ORCHESTRA_BROKER_REQUIRED` and invokes no model |
-| Pattern A `/orchestra` broker | `IMPLEMENTED · LIVE UNPROVEN` | `init`, `status`, and exact-mission-digest `advance` route to one pinned packaged broker without a shell; `/orchestra propose` invokes that broker's internal `publish-intent` verb; no live mission or publication was run |
-| Draft PR One Surface | `SIDECAR-ONLY` | `/orchestra propose <mission-id> <absolute-owner-private-details-json>` validates the broker's digest-bound intent and submits it to the shared sidecar; only the sidecar can execute canonical `github.draft_pr.publish.v1`; UCP registers neither that ID nor `git.publish_draft_pr`, and the guard denies direct invocation |
+| Pattern A `/orchestra` broker | `IMPLEMENTED · LIVE UNPROVEN` | Approval-bound `prepare` wraps an owner-private brief with the authenticated principal and active session; read-only `status`/`progress` inspect it; approval-bound exact-digest `advance` routes to one pinned packaged broker without a shell; no live mission was run |
+| Draft PR One Surface | `SIDECAR-ONLY` | `/orchestra propose <mission-id> <absolute-publication-metadata-json>` accepts only schema/title/body/`labels:[]`, validates the broker's digest-bound intent, and submits it to the shared sidecar; only the sidecar can execute the canonical draft action; UCP registers neither that action nor its retired legacy alias, and the guard denies direct invocation |
 | GitHub check read | `IMPLEMENTED · SOURCE-INSPECTED · LIVE UNPROVEN` | Request binds repository, PR number, and exact expected 40-hex head SHA; the child denies `GITHUB_CHECKS_HEAD_MISMATCH`; no direct adapter test or live read was run |
 | Pattern A roster | `SHIPPED LOCAL-ONLY` | Owner-private local JSON stamp; no remote PR attachment effect |
 | Bench reads | `SHIPPED · BLOCKED` | Fresh health says `missing_config`; registry test proves named missing config and no Markdown fallback; no live read |
@@ -140,8 +140,8 @@ Durable mission bundles are disabled. Grants bind the exact effect ID and SHA-25
 
 | TD2 boundary | Typed route | Current proof |
 |---|---|---|
-| `GIT_PUSH_DENIED` | `/orchestra propose` → pinned broker `publish-intent` → shared sidecar `github.draft_pr.publish.v1` | UCP has no draft-publication ID or executor; live push/PR belongs only to the exact sidecar proposal/approval broker and remains unperformed |
-| `UNBOUNDED_ORCHESTRA_PACKET_DENIED` | `packet.freeze` + `/orchestra init|advance` | Frozen packet behavior is covered by the current suite; UCP dispatch stub denies; packaged broker live mission unproven |
+| `GIT_PUSH_DENIED` | `/orchestra propose` → shared sidecar `github.draft_pr.publish.v1` | UCP and the Orchestra broker have no draft-publication executor; live push/PR belongs only to the exact sidecar proposal/approval broker and remains unperformed |
+| `UNBOUNDED_ORCHESTRA_PACKET_DENIED` | structurally effects-none `packet.freeze` + approval-bound `/orchestra prepare|advance` | Documentary prose is allowed, but frozen packets cannot carry effects or credentials; UCP dispatch stub denies and packaged broker live mission remains unproven |
 | `OUTBOUND_MESSAGE_DENIED` | `mail.doctor` + local `mail.draft` | Local adapters shipped; `mail.send` hard denied |
 | `REMOTE_HOST_EFFECT_DENIED` | `mesh.*` | Public probes returned HTTP 200 while the row stayed locked; admin verify is unproven and mint is a stub |
 | `SECRET_MANAGER_ACCESS_DENIED` | GateKeeper + 1Password refs | Code present; real biometric/1Password access unperformed |
@@ -154,16 +154,15 @@ Durable mission bundles are disabled. Grants bind the exact effect ID and SHA-25
 - [x] Build passes.
 - [x] Current UCP suite passes 21/21.
 - [x] `ucp-smoke.sh` passes the local UCP boundary checks, confirms draft publication is absent from UCP, and performs no mutation.
-- [x] Full v2 regression suite passes 321/321, package smoke passes 42/42, and the package canary passes.
-- [x] Aurelius operator guard and launcher suite passes 35/35.
-- [x] Guard and CLI non-hard-denied effect sets match exactly at 19/19; direct `github.draft_pr.publish.v1` and `git.publish_draft_pr` invocation is denied.
+- [x] Full v2 regression suite passes 337/337, package smoke passes 42/42, and the package canary passes.
+- [x] Aurelius Pattern A, operator guard, launcher, adapter, and packager suite passes 74/74.
+- [x] Guard and CLI non-hard-denied effect sets match exactly at 19/19; direct invocation of the canonical sidecar draft action and its retired legacy alias is denied.
 - [x] Fresh health card runs, identifies the MacBook as a node, reports nine blockers, and records zero secret uses.
 - [x] Bench missing config is explicit and does not fall back to Markdown.
 - [x] `mail.send` is hard denied with a named durable receipt.
-- [x] Frozen packets keep effects/credentials absent and deny protected active intent.
-- [ ] Replace or retire the legacy packet text regex if quoted discussion of protected commands must be accepted; it is conservative rather than a semantic tool/target parser.
+- [x] Frozen packets allow documentary protected-command prose while structurally fixing `effects:"none"` and `credentials:"forbidden"`; unsupported authority fields and credential-store paths remain denied.
 - [ ] Exercise real Touch ID plus real 1Password child-only access.
-- [ ] Exercise one bounded live mission through `/orchestra init` and exact-digest `/orchestra advance`; UCP `seat.dispatch` must remain a denial stub.
+- [ ] Exercise one bounded live mission through approval-bound `/orchestra prepare` and exact-digest `/orchestra advance`, observing it with read-only `/orchestra status|progress`; UCP `seat.dispatch` must remain a denial stub.
 - [ ] Perform and verify one live draft PR publish, with no ready/merge/deploy.
 - [x] Bind protected UCP grants to the exact request digest and a recent matching `dry_run` receipt; operator review remains a required procedure.
 - [x] Bind `github.watch_checks` to repository, PR number, and an expected 40-hex head SHA.
@@ -179,7 +178,7 @@ Durable mission bundles are disabled. Grants bind the exact effect ID and SHA-25
 
 Keep these statements explicit:
 
-- Live GitHub publish was **not performed**; UCP has no draft-publication effect or executor, and only `/orchestra propose` through the pinned broker's `publish-intent` verb and the sidecar proposal/approval path may publish.
+- Live GitHub publish was **not performed**; UCP and the Orchestra broker have no draft-publication executor, and only exact `/orchestra propose` metadata followed by the sidecar proposal/approval path may publish.
 - Real biometric/1Password materialization was **not performed**.
 - Bounded live Pattern A dispatch was **not performed**; UCP `seat.dispatch` cannot invoke a model.
 - Live Bench read was **not performed**.
@@ -197,7 +196,6 @@ Keep these statements explicit:
 | Local grant/receipt integrity | UCP implementation owner + Light | Adopt cryptographic/broker attestation or explicitly accept the local-owner trust model; timestamp/schema/file-safety validation alone is not non-repudiation |
 | Direct UCP coverage gaps | UCP implementation owner | Exercise grant-receipt issuance, check-head mismatch, and adapter state-bucket/non-overwrite paths directly |
 | Real GateKeeper proof | Light | Fresh test run plus one approved real Touch ID/1Password canary with zero-value receipt |
-| Legacy packet intent parser | UCP implementation owner | Quoted prose is not false-denied and executable tool/target classes are covered, or the validator is formally retired behind `/orchestra` |
 | CS grant broker | Bench owner + Light | Reviewed tenant-bound broker replaces ceremony stub and has before/after proof |
 | Mesh mint broker | Mesh owner + Light | Reviewed non-rendering broker replaces ceremony stub and has expiry/revocation proof |
 | Second-tenant isolation | Mesh/Bench owners | Denial proven at enrollment, routing, and memory auth |

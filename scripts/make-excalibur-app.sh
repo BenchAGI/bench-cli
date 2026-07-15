@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Build the canonical Excalibur One-Surface macOS launcher.
 #
 # Unlike the legacy Native/Aurelius preview and BenchAGI launcher, this bundle
@@ -31,16 +31,55 @@ case "$APP_DIR" in
   *) echo "make-excalibur-app: EXCALIBUR_APP_DIR must be absolute" >&2; exit 1 ;;
 esac
 
-if [ -z "$CLI_NODE" ] || [ ! -x "$CLI_NODE" ]; then
+canonical_sealed_file() {
+  local candidate="$1"
+  local label="$2"
+  local require_executable="$3"
+  case "$candidate" in
+    /*) ;;
+    *) echo "make-excalibur-app: $label must be an absolute path" >&2; return 1 ;;
+  esac
+  if [ -L "$candidate" ]; then
+    echo "make-excalibur-app: $label must not be a symlink" >&2
+    return 1
+  fi
+  local canonical_parent
+  canonical_parent="$(cd -P "$(dirname "$candidate")" 2>/dev/null && pwd)" || {
+    echo "make-excalibur-app: $label parent directory does not exist" >&2
+    return 1
+  }
+  candidate="$canonical_parent/$(basename "$candidate")"
+  if [ -L "$candidate" ] || [ ! -f "$candidate" ]; then
+    echo "make-excalibur-app: $label must be a canonical regular file" >&2
+    return 1
+  fi
+  if [ "$require_executable" = "1" ] && [ ! -x "$candidate" ]; then
+    echo "make-excalibur-app: $label must be executable" >&2
+    return 1
+  fi
+  local link_count mode
+  link_count="$(/usr/bin/stat -f '%l' "$candidate")"
+  mode="$(/usr/bin/stat -f '%Lp' "$candidate")"
+  if [ "$link_count" -ne 1 ]; then
+    echo "make-excalibur-app: $label must be a single-link file" >&2
+    return 1
+  fi
+  case "$mode" in
+    ""|*[!0-7]*) echo "make-excalibur-app: could not validate $label permissions" >&2; return 1 ;;
+  esac
+  if (( (8#$mode & 8#22) != 0 )); then
+    echo "make-excalibur-app: $label must not be group/world writable" >&2
+    return 1
+  fi
+  printf '%s' "$candidate"
+}
+
+if [ -z "$CLI_NODE" ]; then
   echo "make-excalibur-app: an exact executable EXCALIBUR_CLI_NODE is required" >&2
   exit 1
 fi
-if [ ! -f "$CLI_ENTRY" ]; then
-  echo "make-excalibur-app: an exact EXCALIBUR_CLI_ENTRY is required" >&2
-  exit 1
-fi
-CLI_NODE="$(cd "$(dirname "$CLI_NODE")" && pwd)/$(basename "$CLI_NODE")"
-CLI_ENTRY="$(cd "$(dirname "$CLI_ENTRY")" && pwd)/$(basename "$CLI_ENTRY")"
+CLI_NODE="$(canonical_sealed_file "$CLI_NODE" "EXCALIBUR_CLI_NODE" 1)"
+CLI_ENTRY="$(canonical_sealed_file "$CLI_ENTRY" "EXCALIBUR_CLI_ENTRY" 0)"
 
 case "$CLI_ENTRY" in
   */bin/excalibur.mjs) ;;
@@ -103,7 +142,7 @@ if [ -e "$TARGET_APP" ] && [ "${EXCALIBUR_REPLACE_EXISTING:-0}" != "1" ]; then
   echo "make-excalibur-app: target already exists; set EXCALIBUR_REPLACE_EXISTING=1 for an explicit replacement" >&2
   exit 1
 fi
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "$APP_DIR/.excalibur-app-stage.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 APP="$tmp/$APP_NAME.app"
 
@@ -137,6 +176,29 @@ mkdir -p "$RUNTIME/cli/bin"
 /usr/bin/ditto --noqtn "$PACKAGE_ROOT/node_modules" "$RUNTIME/cli/node_modules"
 chmod 0755 "$RUNTIME/node" "$RUNTIME/cli/bin/excalibur.mjs"
 
+# The source Node and entry are sealed inputs above. Verify the copied files are
+# still byte-identical regular single-link executables, then audit every runtime
+# symlink before any bundle is signed or moved into place.
+EXCALIBUR_RUNTIME_ROOT="$RUNTIME" \
+EXCALIBUR_RUNTIME_NODE_SOURCE="$CLI_NODE" \
+EXCALIBUR_RUNTIME_ENTRY_SOURCE="$CLI_ENTRY" \
+EXCALIBUR_PACKAGE_ROOT="$PACKAGE_ROOT" \
+"$CLI_NODE" --input-type=module -e '
+  import { createHash } from "node:crypto";
+  import { readFile } from "node:fs/promises";
+  import { join } from "node:path";
+  import { pathToFileURL } from "node:url";
+  const digest = async (path) => createHash("sha256").update(await readFile(path)).digest("hex");
+  const launcher = await import(pathToFileURL(join(
+    process.env.EXCALIBUR_PACKAGE_ROOT,
+    "dist/v2/excalibur/launcher-integrity.js",
+  )).href);
+  await launcher.verifyBundledRuntimeClosure(process.env.EXCALIBUR_RUNTIME_ROOT, {
+    nodeSha256: await digest(process.env.EXCALIBUR_RUNTIME_NODE_SOURCE),
+    cliEntrySha256: await digest(process.env.EXCALIBUR_RUNTIME_ENTRY_SOURCE),
+  });
+'
+
 shell_quote() { printf '%q' "$1"; }
 if [ -n "$ORCHESTRA_CONFIG" ]; then
   ORCHESTRA_BINDING="export EXCALIBUR_ORCHESTRA_CONFIG=$(shell_quote "$ORCHESTRA_CONFIG")
@@ -145,7 +207,7 @@ else
   ORCHESTRA_BINDING="unset EXCALIBUR_ORCHESTRA_CONFIG EXCALIBUR_PATTERN_A_STATE_ROOT EXCALIBUR_ORCHESTRA_STATE_DIR"
 fi
 cat > "$APP/Contents/Resources/launch.command" <<LAUNCH
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 RESOURCE_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 APP_BUNDLE="\$(cd "\$RESOURCE_DIR/../.." && pwd)"
@@ -228,9 +290,12 @@ set_plist() {
   && set_plist CFBundleIconName ExcaliburOneSurface
 set_plist CFBundleName "$APP_NAME"
 set_plist CFBundleIdentifier "com.benchagi.excalibur-one-surface"
-/usr/bin/codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 /usr/bin/xattr -cr "$APP" 2>/dev/null || true
 /usr/bin/touch "$APP"
+if ! /usr/bin/codesign --force --deep --sign - "$APP"; then
+  echo "make-excalibur-app: failed to sign the staged self-contained bundle" >&2
+  exit 1
+fi
 
 EXCALIBUR_VERIFY_MANIFEST="$APP/Contents/Resources/excalibur-launcher.json" \
 EXCALIBUR_VERIFY_ENTRY="$APP/Contents/Resources/runtime/cli/bin/excalibur.mjs" \
@@ -245,6 +310,11 @@ EXCALIBUR_PACKAGE_ROOT="$PACKAGE_ROOT" \
     process.env.EXCALIBUR_VERIFY_ENTRY,
   );
 '
+
+if ! /usr/bin/codesign --verify --deep --strict "$APP"; then
+  echo "make-excalibur-app: staged bundle failed the mandatory deep/strict signature verification" >&2
+  exit 1
+fi
 
 if [ -e "$TARGET_APP" ]; then
   mv "$TARGET_APP" "$tmp/previous.app"

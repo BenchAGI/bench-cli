@@ -13,6 +13,10 @@ export const EXCALIBUR_ORCHESTRA_CONFIG_SCHEMA = "excalibur.pattern-a-broker-con
 export const EXCALIBUR_ORCHESTRA_RESULT_SCHEMA = "excalibur.pattern-a-broker-result.v1" as const;
 export const EXCALIBUR_ORCHESTRA_PREFLIGHT_REQUEST_SCHEMA = "excalibur-pattern-a-publication-verifier-preflight-request-v1" as const;
 export const EXCALIBUR_ORCHESTRA_PREFLIGHT_RESULT_SCHEMA = "excalibur-pattern-a-publication-verifier-preflight-result-v1" as const;
+export const EXCALIBUR_ORCHESTRA_PREPARE_REQUEST_SCHEMA = "excalibur-pattern-a-prepare-request-v1" as const;
+export const EXCALIBUR_ORCHESTRA_PROGRESS_RESULT_SCHEMA = "excalibur.pattern-a-progress-result.v1" as const;
+export const EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA = "excalibur-pattern-a-progress-event/v1" as const;
+export const EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX = "EXCALIBUR_PATTERN_A_PROGRESS " as const;
 
 export type OrchestraBrokerConfig = {
   schemaVersion: typeof EXCALIBUR_ORCHESTRA_CONFIG_SCHEMA;
@@ -39,6 +43,34 @@ export type OrchestraBrokerResult = {
   receiptCounts: Record<string, number>;
 };
 
+export type OrchestraProgressEvent = {
+  schema: typeof EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA;
+  sequence: number;
+  priorEventDigest: string;
+  eventDigest: string;
+  missionId: string;
+  missionDigest: string;
+  state: string;
+  phase: string;
+  status: "STARTED" | "COMPLETED" | "RETURNED" | "BLOCKED";
+  seat: string | null;
+  taskId: string | null;
+  round: number | null;
+  completed: number;
+  total: number;
+  occurredAt: string;
+};
+
+export type OrchestraProgressResult = {
+  schemaVersion: typeof EXCALIBUR_ORCHESTRA_PROGRESS_RESULT_SCHEMA;
+  missionId: string;
+  missionDigest: string;
+  missionState: string;
+  revision: number;
+  eventCount: number;
+  latestEvent: OrchestraProgressEvent | null;
+};
+
 export type OrchestraExecFile = (
   executable: string,
   argv: string[],
@@ -50,6 +82,7 @@ export type OrchestraExecFile = (
     shell: false;
     windowsHide: true;
     input?: string;
+    onStderrLine?: (line: string) => void;
   },
 ) => Promise<{ stdout: string; stderr: string }>;
 
@@ -57,6 +90,8 @@ export type OrchestraCommandOptions = {
   env?: NodeJS.ProcessEnv;
   execFileFn?: OrchestraExecFile;
   onProgress?: (line: string) => void;
+  principalId?: string;
+  sessionId?: string;
 };
 
 export type OrchestraPublicationIntent = {
@@ -69,6 +104,9 @@ export type OrchestraPublicationIntent = {
 const MISSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DIGEST_RE = /^[a-f0-9]{64}$/;
 const RECEIPT_KEY_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const SEAT_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+const PUBLICATION_METADATA_SCHEMA = "excalibur-pattern-a-publication-metadata/v1";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -211,16 +249,110 @@ function parseResult(value: unknown): OrchestraBrokerResult {
   return { ...value, receiptCounts: counts } as OrchestraBrokerResult;
 }
 
+function parseProgressEvent(
+  value: unknown,
+  expected?: { missionId: string; missionDigest?: string },
+): OrchestraProgressEvent {
+  if (!isRecord(value) || !exactKeys(value, [
+    "schema", "sequence", "priorEventDigest", "eventDigest", "missionId",
+    "missionDigest", "state", "phase", "status", "seat", "taskId", "round",
+    "completed", "total", "occurredAt",
+  ]) || value.schema !== EXCALIBUR_ORCHESTRA_PROGRESS_EVENT_SCHEMA
+      || !Number.isSafeInteger(value.sequence) || Number(value.sequence) < 1 || Number(value.sequence) > 4096
+      || typeof value.priorEventDigest !== "string" || !DIGEST_RE.test(value.priorEventDigest)
+      || typeof value.eventDigest !== "string" || !DIGEST_RE.test(value.eventDigest)
+      || typeof value.missionId !== "string" || !MISSION_ID_RE.test(value.missionId)
+      || typeof value.missionDigest !== "string" || !DIGEST_RE.test(value.missionDigest)
+      || !boundedText(value.state, 128) || !boundedText(value.phase, 128)
+      || !["STARTED", "COMPLETED", "RETURNED", "BLOCKED"].includes(String(value.status || ""))
+      || (value.seat !== null && (typeof value.seat !== "string" || !SEAT_ID_RE.test(value.seat)))
+      || (value.taskId !== null && (typeof value.taskId !== "string" || !MISSION_ID_RE.test(value.taskId)))
+      || (value.round !== null
+        && (!Number.isSafeInteger(value.round) || Number(value.round) < 1 || Number(value.round) > 4))
+      || !Number.isSafeInteger(value.completed) || Number(value.completed) < 0 || Number(value.completed) > 100
+      || !Number.isSafeInteger(value.total) || Number(value.total) < 0 || Number(value.total) > 100
+      || Number(value.completed) > Number(value.total)
+      || typeof value.occurredAt !== "string" || !TIMESTAMP_RE.test(value.occurredAt)
+      || (expected !== undefined && value.missionId !== expected.missionId)
+      || (expected?.missionDigest !== undefined && value.missionDigest !== expected.missionDigest)) {
+    throw new Error("broker returned a malformed Pattern A progress event");
+  }
+  const { eventDigest, ...eventWithoutDigest } = value;
+  if (canonicalSha256(eventWithoutDigest) !== eventDigest) {
+    throw new Error("broker returned a Pattern A progress event with an invalid digest");
+  }
+  return value as unknown as OrchestraProgressEvent;
+}
+
+function parseProgressResult(value: unknown, missionId: string): OrchestraProgressResult {
+  if (!isRecord(value) || !exactKeys(value, [
+    "schemaVersion", "missionId", "missionDigest", "missionState", "revision",
+    "eventCount", "latestEvent",
+  ]) || value.schemaVersion !== EXCALIBUR_ORCHESTRA_PROGRESS_RESULT_SCHEMA
+      || value.missionId !== missionId
+      || typeof value.missionDigest !== "string" || !DIGEST_RE.test(value.missionDigest)
+      || !boundedText(value.missionState, 128)
+      || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0
+      || !Number.isSafeInteger(value.eventCount) || Number(value.eventCount) < 0 || Number(value.eventCount) > 4096
+      || (Number(value.eventCount) === 0 ? value.latestEvent !== null : value.latestEvent === null)) {
+    throw new Error("broker returned a malformed Pattern A progress result");
+  }
+  const latestEvent = value.latestEvent === null
+    ? null
+    : parseProgressEvent(value.latestEvent, { missionId, missionDigest: value.missionDigest });
+  return { ...value, latestEvent } as OrchestraProgressResult;
+}
+
+function renderProgressEvent(event: OrchestraProgressEvent): string {
+  return `Orchestra · progress #${event.sequence} · ${event.phase} · ${event.seat ?? "orchestrator"} ${event.status} · ${event.completed}/${event.total}`;
+}
+
+function renderProgressResult(result: OrchestraProgressResult): string[] {
+  return [
+    `Orchestra · ${result.missionId} · ${result.missionState} · revision ${result.revision}`,
+    `  progress events: ${result.eventCount}`,
+    ...(result.latestEvent ? [`  latest: ${renderProgressEvent(result.latestEvent)}`] : ["  latest: none"]),
+    `  mission digest: ${result.missionDigest}`,
+  ];
+}
+
 async function defaultExecFile(
   executable: string,
   argv: string[],
   options: Parameters<OrchestraExecFile>[2],
 ): Promise<{ stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
-    const { input, ...execOptions } = options;
+    const { input, onStderrLine, ...execOptions } = options;
+    let pendingStderr = "";
+    let progressError: unknown = null;
+    const deliverLines = (text: string, final = false): void => {
+      pendingStderr += text;
+      if (Buffer.byteLength(pendingStderr, "utf8") > 256 * 1024) {
+        throw new Error("broker progress output exceeded the bounded response size");
+      }
+      const lines = pendingStderr.split(/\r?\n/);
+      pendingStderr = final ? "" : (lines.pop() ?? "");
+      for (const line of lines) if (line) onStderrLine?.(line);
+      if (final && pendingStderr) onStderrLine?.(pendingStderr);
+    };
     const child = execFile(executable, argv, execOptions, (error, stdout, stderr) => {
-      if (error) reject(error);
+      try {
+        deliverLines("", true);
+      } catch (progressFailure) {
+        progressError = progressFailure;
+      }
+      if (progressError) reject(progressError);
+      else if (error) reject(error);
       else resolve({ stdout: String(stdout), stderr: String(stderr) });
+    });
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      if (progressError) return;
+      try {
+        deliverLines(String(chunk));
+      } catch (error) {
+        progressError = error;
+        child.kill();
+      }
     });
     child.stdin?.end(input ?? "");
   });
@@ -234,7 +366,11 @@ function unavailable(reason: string): string[] {
   ];
 }
 
-async function resolveOwnerPrivateJson(path: string, label: "mission" | "details", maximum: number): Promise<string> {
+async function readOwnerPrivateJson(
+  path: string,
+  label: "brief" | "details",
+  maximum: number,
+): Promise<{ path: string; value: unknown }> {
   if (!isAbsolute(path)) throw new Error(`${label} JSON path must be absolute`);
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
@@ -247,10 +383,23 @@ async function resolveOwnerPrivateJson(path: string, label: "mission" | "details
     if ((operatorUid !== null && info.uid !== operatorUid) || (info.mode & 0o077) !== 0) {
       throw new Error(`${label} JSON must be owned by the current operator with no group/world permissions`);
     }
+    const raw = await handle.readFile("utf8");
+    const value = JSON.parse(raw);
+    canonicalJson(value);
+    return { path: await realpath(path), value };
   } finally {
     await handle?.close().catch(() => {});
   }
-  return await realpath(path);
+}
+
+function validatePublicationMetadata(value: unknown): void {
+  if (!isRecord(value) || !exactKeys(value, ["schema", "title", "body", "labels"])
+      || value.schema !== PUBLICATION_METADATA_SCHEMA
+      || !boundedText(value.title, 256)
+      || !boundedText(value.body, 32_768)
+      || !Array.isArray(value.labels) || value.labels.length !== 0) {
+    throw new Error("details JSON must contain only exact Pattern A publication metadata");
+  }
 }
 
 export async function resolveOrchestraBrokerConfig(
@@ -385,7 +534,7 @@ function renderResult(result: OrchestraBrokerResult): string[] {
 function safeBrokerFailure(error: unknown): string {
   if (error instanceof SyntaxError) return "broker returned invalid JSON";
   const message = error instanceof Error ? error.message : "";
-  if (/^(?:broker (?:returned|output|result)|(?:mission|details) JSON) /.test(message)) return message;
+  if (/^(?:broker (?:returned|output|result|progress)|(?:brief|details) JSON) /.test(message)) return message;
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   return code
     ? `broker process did not complete (${String(code).slice(0, 32)})`
@@ -403,38 +552,72 @@ export async function runOrchestraCommand(
   const env = options.env ?? process.env;
   const verb = args[0];
   const missionId = args[1];
-  if (verb !== "init" && verb !== "status" && verb !== "advance") {
-    return ["Orchestra · usage: /orchestra init <absolute-mission-json> | status <mission-id> | advance <mission-id> <exact-mission-digest>"];
+  if (verb !== "prepare" && verb !== "status" && verb !== "progress" && verb !== "advance") {
+    return ["Orchestra · usage: /orchestra prepare <brief-json> | status <mission-id> | progress <mission-id> | advance <mission-id> <exact-mission-digest> | propose <mission-id> <metadata-json>"];
   }
-  if (verb === "init") {
+  if (verb === "prepare") {
     if (args.length !== 2 || !missionId || !isAbsolute(missionId)) {
-      return ["Orchestra · usage: /orchestra init <absolute-mission-json>"];
+      return ["Orchestra · usage: /orchestra prepare <absolute-mission-brief-json>"];
+    }
+    if (!boundedText(options.principalId, 160) || !boundedText(options.sessionId, 160)) {
+      return unavailable("authenticated operator principal and active conversation are required for mission preparation");
     }
   } else if (!missionId || !MISSION_ID_RE.test(missionId)) {
     return ["Orchestra · invalid mission id (use 1-128 letters, numbers, '.', '_', ':', or '-')"];
   }
   const digest = args[2];
-  if ((verb === "status" && args.length !== 2)
+  if ((["status", "progress"].includes(verb) && args.length !== 2)
       || (verb === "advance" && (args.length !== 3 || !digest || !DIGEST_RE.test(digest)))) {
-    return [verb === "status"
-      ? "Orchestra · usage: /orchestra status <mission-id>"
+    return [verb === "status" || verb === "progress"
+      ? `Orchestra · usage: /orchestra ${verb} <mission-id>`
       : "Orchestra · usage: /orchestra advance <mission-id> <exact-mission-digest>"];
   }
 
   const broker = await resolveOrchestraBrokerConfig(env, options);
   if ("reason" in broker) return unavailable(broker.reason);
   try {
-    const missionPath = verb === "init"
-      ? await resolveOwnerPrivateJson(missionId as string, "mission", 256 * 1024)
+    const brief = verb === "prepare"
+      ? await readOwnerPrivateJson(missionId as string, "brief", 256 * 1024)
       : null;
-    const argv = verb === "init"
-      ? ["init", "--mission", missionPath as string]
+    if (brief && !isRecord(brief.value)) throw new Error("brief JSON must contain one object");
+    const prepareInput = brief === null ? undefined : canonicalJson({
+      schema: EXCALIBUR_ORCHESTRA_PREPARE_REQUEST_SCHEMA,
+      principalId: options.principalId,
+      sessionId: options.sessionId,
+      brief: brief.value,
+    });
+    const argv = verb === "prepare"
+      ? ["prepare"]
       : verb === "status"
         ? ["status", "--mission-id", missionId as string]
-        : ["advance", "--mission-id", missionId as string, "--confirm-mission-digest", digest as string];
-    if (verb === "advance") {
-      options.onProgress?.("Orchestra · advance running · Pattern A seats may take up to 4 hours; do not resubmit");
-    }
+        : verb === "progress"
+          ? ["progress", "--mission-id", missionId as string]
+          : ["advance", "--mission-id", missionId as string, "--confirm-mission-digest", digest as string];
+    let lastProgress: OrchestraProgressEvent | null = null;
+    let streamedProgress = 0;
+    const consumeProgressLine = (line: string): void => {
+      if (!line.startsWith(EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX)) return;
+      const payload = line.slice(EXCALIBUR_ORCHESTRA_PROGRESS_PREFIX.length);
+      if (Buffer.byteLength(payload, "utf8") > 16 * 1024) {
+        throw new Error("broker progress event exceeded the bounded response size");
+      }
+      const raw = JSON.parse(payload);
+      if (canonicalJson(raw) !== payload) throw new Error("broker progress event is not canonical JSON");
+      const event = parseProgressEvent(raw, {
+        missionId: missionId as string,
+        missionDigest: digest as string,
+      });
+      if (lastProgress && (event.sequence !== lastProgress.sequence + 1
+          || event.priorEventDigest !== lastProgress.eventDigest)) {
+        throw new Error("broker progress stream broke sequence or prior-digest continuity");
+      }
+      lastProgress = event;
+      streamedProgress += 1;
+      options.onProgress?.(renderProgressEvent(event));
+    };
+    if (verb === "advance") options.onProgress?.(
+      "Orchestra · advance running · Pattern A seats may take up to 4 hours; do not resubmit",
+    );
     const executed = await (options.execFileFn ?? defaultExecFile)(broker.executable, argv, {
       cwd: dirname(broker.executable),
       env: brokerEnvironment(env, broker.configPath, broker.stateRoot),
@@ -442,12 +625,20 @@ export async function runOrchestraCommand(
       maxBuffer: 256 * 1024,
       shell: false,
       windowsHide: true,
+      ...(prepareInput === undefined ? {} : { input: `${prepareInput}\n` }),
+      ...(verb === "advance" ? { onStderrLine: consumeProgressLine } : {}),
     });
     if (Buffer.byteLength(executed.stdout, "utf8") > 256 * 1024) {
       throw new Error("broker output exceeded the bounded response size");
     }
+    if (verb === "progress") {
+      return renderProgressResult(parseProgressResult(JSON.parse(executed.stdout), missionId as string));
+    }
+    if (verb === "advance" && streamedProgress === 0) {
+      for (const line of executed.stderr.split(/\r?\n/)) consumeProgressLine(line);
+    }
     const result = parseResult(JSON.parse(executed.stdout));
-    if ((verb !== "init" && result.missionId !== missionId)
+    if ((verb !== "prepare" && result.missionId !== missionId)
         || (verb === "advance" && result.missionDigest !== digest)) {
       throw new Error("broker result did not bind the exact mission and digest");
     }
@@ -473,9 +664,10 @@ export async function requestOrchestraPublicationIntent(
   const broker = await resolveOrchestraBrokerConfig(env, options);
   if ("reason" in broker) return broker;
   try {
-    const details = await resolveOwnerPrivateJson(detailsPath, "details", 64 * 1024);
+    const details = await readOwnerPrivateJson(detailsPath, "details", 64 * 1024);
+    validatePublicationMetadata(details.value);
     const executed = await (options.execFileFn ?? defaultExecFile)(broker.executable, [
-      "publish-intent", "--mission-id", missionId, "--details", details,
+      "propose", "--mission-id", missionId, "--details", details.path,
     ], {
       cwd: dirname(broker.executable),
       env: brokerEnvironment(env, broker.configPath, broker.stateRoot),

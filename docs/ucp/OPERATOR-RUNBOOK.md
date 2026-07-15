@@ -131,27 +131,38 @@ Use [`between-call-value`](./CUSTOMER-PLAYBOOKS.md#6-playbook-between-call-value
 
 1. Frame the pain point as outcome, repository, allowed paths, non-goals, maximum files, tests, proof, and expiry.
 2. Create an isolated worktree with `worktree.prepare`.
-3. Freeze the packet. Put merge, deploy, send, and secret access in `nonGoals`; the validator rejects protected active intent in `goal` and `proof`.
-4. Initialize the owner-private mission through `/orchestra init <absolute-mission-json>`, inspect `/orchestra status <mission-id>`, then advance only with `/orchestra advance <mission-id> <exact-mission-digest>`. The configured packaged broker is the only model-dispatch path. UCP `seat.dispatch` is a compatibility validator whose execute path denies without invoking a model.
-5. Implement and test locally.
+3. Freeze the packet. Documentary protected-command prose is allowed, while the frozen structure still fixes `effects:"none"` and `credentials:"forbidden"` and rejects unsupported authority or credential fields.
+4. In an authenticated active approval-bound conversation, run `/orchestra prepare <absolute-mission-brief-json>`. The CLI reads the owner-private brief and sends the broker a canonical `excalibur-pattern-a-prepare-request-v1` wrapper containing the authenticated principal, active session ID, and parsed brief; the private file path is not broker input. The broker derives the mission and isolated worktrees.
+5. Inspect it with read-only `/orchestra status <mission-id>` and `/orchestra progress <mission-id>`, then use approval-bound `/orchestra advance <mission-id> <exact-mission-digest>` for each legal transition. The configured packaged broker is the only model-dispatch path. UCP `seat.dispatch` is a compatibility validator whose execute path denies without invoking a model.
+6. Implement and test locally.
 
 ### Draft proposal
 
-UCP has no draft-publication effect. In particular, neither
-`github.draft_pr.publish.v1` nor `git.publish_draft_pr` is a UCP effect. After
+UCP has no draft-publication effect: neither the canonical sidecar action nor
+the retired legacy draft alias is registered. After
 `ANVIL_GATED`, write the bounded title/body/empty-label metadata to an
 owner-private JSON file and run:
 
 ```text
-/orchestra propose <mission-id> <absolute-owner-private-details-json>
+/orchestra propose <mission-id> <absolute-publication-metadata-json>
 ```
 
-This is the operator-facing command. It invokes the pinned Pattern A broker's
-internal `publish-intent` subprocess verb, validates the returned intent,
-intent digest, publication-gate digest, and action-binding digest, then asks the
-shared sidecar to create the exact approval card. It does not invoke the
-publisher itself. The operator guard denies direct attempts to invoke either
-removed draft-publication effect ID.
+The owner-private metadata file must contain exactly:
+
+```json
+{
+  "schema": "excalibur-pattern-a-publication-metadata/v1",
+  "title": "<bounded non-empty title>",
+  "body": "<bounded body>",
+  "labels": []
+}
+```
+
+This is the operator-facing command. The CLI validates that exact metadata and
+the pinned Pattern A broker's digest-bound result, then asks the shared sidecar
+to create the exact approval card. It does not invoke the publisher itself;
+only the sidecar can execute after exact approval. The operator guard denies
+direct attempts to invoke either removed draft-publication effect ID.
 
 Review:
 
@@ -169,7 +180,7 @@ execution receipt. UCP deliberately has no GitHub draft action or executor.
 ### Publish
 
 1. Keep the shared sidecar online with `effectsPosture:approval_bound` and the canonical draft publisher capability present.
-2. Run `/orchestra propose`; allow the CLI to invoke only the pinned broker's `publish-intent` verb. Never run `git push`, `gh pr create`, or either removed draft-publication ID through UCP.
+2. Run `/orchestra propose`; allow the pinned broker to derive Git facts from the frozen mission and exact metadata. Never supply manual hashes or run `git push`, `gh pr create`, or a removed draft-publication ID through UCP.
 3. Review the exact server approval card and approve only with the single-use confirmation nonce path.
 4. Require the correlated **sidecar execution receipt** for action `github.draft_pr.publish.v1` to report `draft:true`, the exact head SHA, GitHub URL/number, kernel-read publisher login/numeric ID, publisher-config digest, and publisher-identity attestation digest.
 5. `github.watch_checks` is another GateKeeper-protected effect. Supply repository, PR number, and exact `expectedHeadSha`; it denies if the live PR head no longer matches before returning checks.
@@ -206,7 +217,7 @@ Use [`discovery-recap-close`](./CUSTOMER-PLAYBOOKS.md#5-playbook-discovery-recap
 | `UCP_MISSION_BUNDLE_UNAVAILABLE` | Use per-access Touch ID; do not create or edit a bundle file |
 | `BENCH_CS_GRANT_BROKER_REQUIRED` | Use the existing human admin lifecycle; do not bypass the stub |
 | `MESH_PREAUTH_BROKER_REQUIRED` | No key was minted; wait for a reviewed broker |
-| `CANONICAL_ORCHESTRA_BROKER_REQUIRED` | Use `/orchestra init|status|advance`; the UCP adapter invoked no model |
+| `CANONICAL_ORCHESTRA_BROKER_REQUIRED` | Use `/orchestra prepare|status|progress|advance`; the UCP adapter invoked no model |
 | `GITHUB_CHECKS_HEAD_MISMATCH` | Stop; the PR moved from the reviewed SHA and checks are not accepted |
 | `MAIL_SEND_SECOND_GRANT_PATH_NOT_SHIPPED` | Leave the `.eml` as a private draft; no send path exists |
 | Surviving `started` receipt | Treat the effect as indeterminate and inspect the destination before retrying |
