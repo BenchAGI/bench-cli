@@ -101,7 +101,7 @@ test("buildRegistry appends extra commands", () => {
 test("Excalibur registry and help expose the complete aggregate parity surface", () => {
   const registry = buildRegistry(EXCALIBUR_SLASH_COMMANDS);
   const expected = [
-    "pulse", "decisions", "forge", "comms", "schedules", "fleet",
+    "might", "orchestra", "pulse", "decisions", "forge", "comms", "schedules", "fleet",
     "receipts", "controls", "system", "context", "seat", "route", "memory",
   ];
   assert.deepEqual(EXCALIBUR_SLASH_COMMANDS.map((item) => item.name), expected);

@@ -15,6 +15,7 @@
     "scripts/install.sh",
     "scripts/make-dock-app.sh",
     "scripts/make-desktop-app.sh",
+    "scripts/make-excalibur-app.sh",
     "scripts/build-dmg.sh",
     "assets/",
     "completions/",

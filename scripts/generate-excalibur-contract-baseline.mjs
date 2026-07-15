@@ -46,6 +46,7 @@ const requiredExports = [
   "EXCALIBUR_MANIFEST_VERSION",
   "EXCALIBUR_SIDECAR_MIRROR_DIGEST",
   "V1_CAPABILITY_MANIFEST",
+  "V1_ACTION_REGISTRY",
   "V1_ROUTING_PROFILE",
   "canonicalSha256",
 ];
@@ -70,6 +71,18 @@ if (!viewCapabilityIds.every((item) => typeof item === "string")
     || !actionCapabilityIds.every((item) => typeof item === "string")) {
   throw new Error("canonical mirror contains invalid capability identifiers");
 }
+const actionExecutorIds = Object.fromEntries(actionCapabilityIds.map((actionId) => {
+  const registration = mirror.V1_ACTION_REGISTRY?.[actionId];
+  if (registration?.actionId !== actionId
+      || typeof registration.executorId !== "string"
+      || registration.executorId.length < 1) {
+    throw new Error(`canonical action registry is missing the executor binding for ${actionId}`);
+  }
+  return [actionId, registration.executorId];
+}));
+if (Object.keys(mirror.V1_ACTION_REGISTRY).length !== actionCapabilityIds.length) {
+  throw new Error("canonical action registry and capability manifest action sets differ");
+}
 
 const baseline = {
   generatorVersion: 1,
@@ -80,6 +93,7 @@ const baseline = {
   digests,
   viewCapabilityIds,
   actionCapabilityIds,
+  actionExecutorIds,
 };
 
 function render(typescript) {
@@ -90,7 +104,8 @@ function render(typescript) {
     + `export const EXCALIBUR_CONTRACT_BASELINE = Object.freeze(${literal}${typescript ? " as const" : ""});\n${gap}`
     + `export const EXCALIBUR_EXPECTED_DIGESTS = EXCALIBUR_CONTRACT_BASELINE.digests;\n`
     + `export const EXCALIBUR_VIEW_CAPABILITY_IDS = EXCALIBUR_CONTRACT_BASELINE.viewCapabilityIds;\n`
-    + `export const EXCALIBUR_ACTION_CAPABILITY_IDS = EXCALIBUR_CONTRACT_BASELINE.actionCapabilityIds;\n`;
+    + `export const EXCALIBUR_ACTION_CAPABILITY_IDS = EXCALIBUR_CONTRACT_BASELINE.actionCapabilityIds;\n`
+    + `export const EXCALIBUR_ACTION_EXECUTOR_IDS = Object.freeze({ ...EXCALIBUR_CONTRACT_BASELINE.actionExecutorIds });\n`;
 }
 
 const outputs = [

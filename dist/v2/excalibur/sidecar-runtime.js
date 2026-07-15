@@ -4,11 +4,18 @@ import { SafeTraceWriter } from "../diagnostics/safe-trace.js";
 import { c, println } from "../render/ansi.js";
 import { DEFAULT_RENDERER_OPTIONS, StreamRenderer } from "../render/stream.js";
 import { EXCALIBUR_EXPECTED_DIGESTS } from "./contract-baseline.js";
-import { EXCALIBUR_VIEW_COMMANDS, renderCapabilities, renderReceiptPage, renderSnapshot, } from "./control-render.js";
-import { ExcaliburHttpTransport, ExcaliburTransportError, parseExcaliburApproval, parseExcaliburExecutionReceipt, parseExcaliburProposal, resolveSidecarConnection, } from "./http-transport.js";
+import { EXCALIBUR_VIEW_COMMANDS, renderApprovalCard, renderCapabilities, renderReceipt, renderReceiptPage, renderSnapshot, } from "./control-render.js";
+import { ExcaliburHttpTransport, ExcaliburTransportError, EXCALIBUR_DRAFT_PR_ACTION_ID, parseExcaliburApproval, parseExcaliburExecutionReceipt, parseExcaliburProposal, resolveSidecarConnection, } from "./http-transport.js";
 import { loadExcaliburState, recordReceipt, upsertSession, } from "./scoped-state.js";
+import { requestOrchestraPublicationIntent, resolveOrchestraBrokerConfig, runOrchestraCommand, } from "./orchestra-broker.js";
 import { renderOneSurfaceStartupBrief, summarizeOneSurfaceReadiness } from "./readiness.js";
 const DEFAULT_RECONNECT_DELAYS_MS = [0, 100, 250, 500, 1_000];
+async function orchestraHealthLine(env, execFileFn) {
+    const result = await resolveOrchestraBrokerConfig(env, { execFileFn });
+    return "reason" in result
+        ? `  orchestra: unavailable · ${result.reason} · no fallback`
+        : `  orchestra: ready · ${result.executable} · broker ${result.brokerSha256.slice(0, 12)} · resources ${result.resourceSetDigest.slice(0, 12)} · preflight ${result.preflightAttestationDigest.slice(0, 12)}`;
+}
 function selectedScope(opts) {
     if (opts.contextId === "operator-local")
         return { kind: "operator" };
@@ -68,9 +75,11 @@ export class ExcaliburSidecarRuntime {
     completions = new Map();
     completionWaiters = new Map();
     proposals = new Map();
+    capabilities = new Map();
     pendingApproval = null;
     approvalInFlight = false;
     awaitingReceipts = new Set();
+    reconciliationPending = new Set();
     constructor(opts) {
         this.opts = opts;
         this.transport = opts.transport ?? null;
@@ -121,14 +130,25 @@ export class ExcaliburSidecarRuntime {
         this.cursor = session.eventCursor;
         // Load the content-free adapter posture first so the following projection reflects
         // the same initialized memory context. Neither response is submitted as a model turn.
-        const memoryStatus = await this.transport.getMemoryStatus();
-        const snapshot = await this.transport.getSnapshot();
+        const memoryStatus = await this.transport.getMemoryStatus().catch(() => null);
+        const [snapshot, capabilities, receiptProbe] = await Promise.all([
+            this.transport.getSnapshot(),
+            this.transport.getCapabilities(),
+            this.transport.getReceipts({ limit: 1 })
+                .then((page) => ({ page, error: null }))
+                .catch((error) => ({ page: null, error: error.message })),
+        ]);
+        this.capabilities = new Map(capabilities.map((item) => [item.capabilityId, item]));
         const startupBrief = renderOneSurfaceStartupBrief(summarizeOneSurfaceReadiness({
             controlSession: this.controlSession,
             snapshot,
             conversation: session,
             memoryStatus,
+            capabilities,
+            receiptPage: receiptProbe.page,
+            receiptProbeError: receiptProbe.error,
         }));
+        startupBrief.push(await orchestraHealthLine(this.opts.env ?? process.env, this.opts.orchestraExecFileFn));
         for (const [index, line] of startupBrief.entries()) {
             println(index === 0 ? c.bold(line) : c.dim(line));
         }
@@ -282,6 +302,64 @@ export class ExcaliburSidecarRuntime {
         if (!this.transport || !this.controlSession || !this.session) {
             throw new ExcaliburTransportError("RUNTIME_NOT_READY", "shared Excalibur control reads are not connected");
         }
+        if (command === "orchestra") {
+            if (_args[0] === "propose") {
+                if (_args.length !== 3) {
+                    return ["Orchestra · usage: /orchestra propose <mission-id> <absolute-owner-private-details-json>"];
+                }
+                if (this.controlSession.effectsPosture !== "approval_bound") {
+                    return [
+                        "Orchestra · publication proposal locked",
+                        `  Excalibur effects posture is ${this.controlSession.effectsPosture}; no broker or executor was invoked`,
+                    ];
+                }
+                if (this.currentRunId || this.pendingApproval || this.approvalInFlight
+                    || this.awaitingReceipts.size > 0) {
+                    return [
+                        "Orchestra · publication proposal locked",
+                        "  finish the active turn, approval, or receipt before creating another exact proposal",
+                    ];
+                }
+                const requested = await requestOrchestraPublicationIntent(_args[1], _args[2], {
+                    env: this.opts.env ?? process.env,
+                    execFileFn: this.opts.orchestraExecFileFn,
+                });
+                if ("reason" in requested) {
+                    return [
+                        "Orchestra · publication proposal unavailable",
+                        `  ${requested.reason}`,
+                        "  no proposal, approval, or executor was invoked",
+                    ];
+                }
+                const created = await this.transport.createProposal({
+                    conversationId: this.session.sessionId,
+                    intent: requested.publication.intent,
+                });
+                this.acceptCorrelatedProposal(created.proposal);
+                this.acceptApproval(created.approval);
+                if (created.receipt) {
+                    this.acceptExecutionReceipt(created.receipt, created.proposal.commandId);
+                }
+                return [
+                    `Orchestra · publication proposal ${created.replayed ? "replayed" : "created"}`,
+                    `  mission: ${requested.publication.intent.payload.missionId} @ ${requested.publication.intent.payload.missionDigest}`,
+                    `  publication gate: ${requested.publication.publicationGateDigest}`,
+                    `  intent digest: ${requested.publication.intentDigest}`,
+                    "  exact sidecar approval card is active; no executor runs before [A]",
+                ];
+            }
+            if (_args[0] === "advance" && this.controlSession.effectsPosture !== "approval_bound") {
+                return [
+                    "Orchestra · advance locked",
+                    `  Excalibur effects posture is ${this.controlSession.effectsPosture}; no broker was invoked`,
+                ];
+            }
+            return await runOrchestraCommand(_args, {
+                env: this.opts.env ?? process.env,
+                execFileFn: this.opts.orchestraExecFileFn,
+                onProgress: (line) => println(c.dim(line)),
+            });
+        }
         const capabilityId = EXCALIBUR_VIEW_COMMANDS[command];
         if (capabilityId)
             return renderSnapshot(await this.transport.getSnapshot(), capabilityId);
@@ -316,29 +394,57 @@ export class ExcaliburSidecarRuntime {
                 `  routing: ${session.digests?.routing ?? EXCALIBUR_EXPECTED_DIGESTS.routing}`,
             ];
         }
-        if (command === "status") {
-            return [
-                `control: ${session.effectsPosture} · context: ${instance} · auth: ${session.authMethod}`,
-                `contract: ${session.digests?.manifest === EXCALIBUR_EXPECTED_DIGESTS.manifest ? "verified" : "blocked"}`,
-            ];
+        if (command === "status" || command === "might") {
+            const memoryStatus = await this.transport.getMemoryStatus().catch(() => null);
+            const [snapshot, capabilities, receiptProbe] = await Promise.all([
+                this.transport.getSnapshot(),
+                this.transport.getCapabilities(),
+                this.transport.getReceipts({ limit: 1 })
+                    .then((page) => ({ page, error: null }))
+                    .catch((error) => ({ page: null, error: error.message })),
+            ]);
+            const lines = renderOneSurfaceStartupBrief(summarizeOneSurfaceReadiness({
+                controlSession: session,
+                snapshot,
+                conversation: this.session,
+                capabilities,
+                memoryStatus,
+                receiptPage: receiptProbe.page,
+                receiptProbeError: receiptProbe.error,
+            })).map((line, index) => index === 0 ? line.replace("startup", "status") : line);
+            if (this.reconciliationPending.size) {
+                lines.push(`  reconciliation pending: ${this.reconciliationPending.size} indeterminate command(s) · inspect /receipts`);
+            }
+            lines.push(await orchestraHealthLine(this.opts.env ?? process.env, this.opts.orchestraExecFileFn));
+            return lines;
         }
         throw new ExcaliburTransportError("BAD_CONTROL_COMMAND", `unsupported Excalibur command: /${command}`);
     }
     acceptValidatedProposal(event) {
-        if (event.payload.trust !== "validated_cloud_broker") {
+        if (!["validated_cloud_broker", "validated_operator_broker"].includes(String(event.payload.trust || ""))) {
             println(c.dim("(model proposal received as untrusted text; it has no approval or execution authority)"));
             return;
         }
         const proposal = parseExcaliburProposal(event.payload.proposal);
-        if (!this.session || !this.controlSession
-            || this.controlSession.contextKind !== "tenant"
-            || this.controlSession.activeInstance?.instanceId !== proposal.instanceId
+        this.acceptCorrelatedProposal(proposal, event.runId);
+    }
+    acceptCorrelatedProposal(proposal, eventRunId) {
+        const capability = this.capabilities.get(proposal.actionId);
+        const expectedInstance = this.controlSession?.contextKind === "tenant"
+            ? this.controlSession.activeInstance?.instanceId
+            : "operator";
+        const lifetimeMs = Date.parse(proposal.expiresAt) - Date.parse(proposal.createdAt);
+        if (!this.session || !this.controlSession || !capability || capability.kind !== "action"
+            || expectedInstance !== proposal.instanceId
             || proposal.conversationId !== this.session.sessionId
-            || event.runId !== proposal.commandId
+            || (eventRunId !== undefined && eventRunId !== proposal.commandId)
             || proposal.policyResult.decision !== "allow"
+            || capability.availability.status === "unavailable"
             || proposal.approvalId.length === 0
-            || Date.parse(proposal.expiresAt) - Date.parse(proposal.createdAt) !== 10 * 60_000) {
-            throw new ExcaliburTransportError("PROPOSAL_CORRELATION_FAILED", "cloud-brokered proposal did not match this exact tenant conversation");
+            || lifetimeMs <= 0
+            || capability.approvalPolicy.kind !== "single_human_exact_digest"
+            || lifetimeMs > capability.approvalPolicy.expiresInSeconds * 1_000) {
+            throw new ExcaliburTransportError("PROPOSAL_CORRELATION_FAILED", "brokered proposal did not match this exact conversation and capability contract");
         }
         this.proposals.set(proposal.proposalId, proposal);
         println(c.dim(`(validated proposal ${proposal.commandId} · awaiting exact server approval card)`));
@@ -358,14 +464,17 @@ export class ExcaliburSidecarRuntime {
             || approval.principalId !== this.controlSession.principal.principalId
             || approval.grantedScope.length !== 1
             || approval.grantedScope[0] !== proposal.actionId
+            || (approval.decision === "pending" && proposal.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+                && !approval.confirmationNonce)
             || proposal.conversationId !== this.session.sessionId
             || (eventRunId !== undefined && eventRunId !== proposal.commandId)) {
             throw new ExcaliburTransportError("APPROVAL_CORRELATION_FAILED", "approval did not bind the exact validated proposal and principal");
         }
         if (approval.decision === "pending") {
-            if (this.controlSession.contextKind !== "tenant"
-                || this.controlSession.effectsPosture !== "approval_bound"
-                || this.controlSession.activeInstance?.instanceId !== proposal.instanceId
+            const expectedInstance = this.controlSession.contextKind === "tenant"
+                ? this.controlSession.activeInstance?.instanceId : "operator";
+            if (this.controlSession.effectsPosture !== "approval_bound"
+                || expectedInstance !== proposal.instanceId
                 || Date.parse(approval.expiresAt) <= Date.now()) {
                 throw new ExcaliburTransportError("APPROVAL_POSTURE_LOCKED", "approval card is expired or the tenant control session is not approval-bound");
             }
@@ -373,12 +482,10 @@ export class ExcaliburSidecarRuntime {
                 throw new ExcaliburTransportError("APPROVAL_COLLISION", "another exact approval card is already pending");
             }
             this.pendingApproval = { proposal, approval };
-            println(c.yellow("Approval required · server-validated deterministic action"));
-            println(`  action: ${proposal.actionId}`);
-            println(`  command: ${proposal.commandId}`);
-            println(`  maximum deals: ${proposal.payload.maximumDeals} · mode: ${proposal.payload.mode}`);
-            println(`  expires: ${approval.expiresAt}`);
-            println(c.yellow("  [A] Approve  [D] Deny · typed prose never approves"));
+            const card = renderApprovalCard(proposal, approval);
+            for (const [index, line] of card.entries()) {
+                println(index === 0 || index === card.length - 1 ? c.yellow(line) : line);
+            }
             return;
         }
         if (this.pendingApproval?.approval.approvalId === approval.approvalId)
@@ -394,7 +501,9 @@ export class ExcaliburSidecarRuntime {
         }
     }
     acceptReceipt(event) {
-        const receipt = parseExcaliburExecutionReceipt(event.payload.receipt);
+        this.acceptExecutionReceipt(parseExcaliburExecutionReceipt(event.payload.receipt), event.runId);
+    }
+    acceptExecutionReceipt(receipt, eventRunId) {
         const proposal = this.proposals.get(receipt.proposalId);
         if (!proposal || !this.session
             || receipt.commandId !== proposal.commandId
@@ -403,15 +512,22 @@ export class ExcaliburSidecarRuntime {
             || receipt.instanceId !== proposal.instanceId
             || receipt.actionId !== proposal.actionId
             || receipt.idempotencyKey !== proposal.idempotencyKey
-            || event.runId !== proposal.commandId
+            || eventRunId !== proposal.commandId
             || receipt.conversationId !== this.session.sessionId) {
             throw new ExcaliburTransportError("RECEIPT_CORRELATION_FAILED", "execution receipt did not bind the exact validated proposal");
         }
-        this.awaitingReceipts.delete(receipt.approvalId);
-        if (["succeeded", "failed", "expired", "reconciled"].includes(receipt.outcome)) {
+        const release = ["succeeded", "failed", "expired", "indeterminate", "reconciled"].includes(receipt.outcome);
+        if (release)
+            this.awaitingReceipts.delete(receipt.approvalId);
+        if (receipt.outcome === "indeterminate") {
+            this.reconciliationPending.add(receipt.proposalId);
+        }
+        else if (["succeeded", "failed", "expired", "reconciled"].includes(receipt.outcome)) {
+            this.reconciliationPending.delete(receipt.proposalId);
             this.proposals.delete(receipt.proposalId);
         }
-        println(c.dim(`(receipt ${receipt.receiptId} · ${receipt.outcome} · command ${receipt.commandId})`));
+        for (const line of renderReceipt(receipt))
+            println(c.dim(line));
     }
     async decidePendingApproval(decision) {
         if (!this.pendingApproval || !this.transport || this.approvalInFlight)
@@ -428,11 +544,19 @@ export class ExcaliburSidecarRuntime {
             const resolved = await this.transport.decideApproval(pending.approval.approvalId, {
                 decision,
                 proposalDigest: pending.proposal.proposalDigest,
+                ...(pending.proposal.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+                    ? { confirmationNonce: pending.approval.confirmationNonce }
+                    : {}),
             });
-            if (resolved.decision !== decision) {
+            if (resolved.approval.decision !== decision) {
                 throw new ExcaliburTransportError("APPROVAL_DECISION_MISMATCH", "server returned a different approval decision");
             }
-            this.acceptApproval(resolved);
+            this.acceptApproval(resolved.approval);
+            if (resolved.receipt)
+                this.acceptExecutionReceipt(resolved.receipt, pending.proposal.commandId);
+            if (resolved.executionUnconfirmed) {
+                println(c.yellow("(execution outcome unconfirmed · reconciliation receipt required; command will not be replayed)"));
+            }
             if (decision === "denied" && this.currentRunId === null)
                 this.eventAbort?.abort();
         }

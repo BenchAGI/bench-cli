@@ -10,6 +10,7 @@ import {
   ExcaliburEffectsLockedError,
   ExcaliburHttpTransport,
   EXCALIBUR_SCHEMA_VERSION,
+  expectedExcaliburExecutorId,
 } from "../excalibur/http-transport.js";
 
 const NOW = "2026-07-14T12:00:00.000Z";
@@ -38,17 +39,17 @@ function readCapability(capabilityId: string): Record<string, unknown> {
   };
 }
 
-function actionCapability(): Record<string, unknown> {
+function actionCapability(capabilityId: string): Record<string, unknown> {
   return {
     schemaVersion: EXCALIBUR_SCHEMA_VERSION,
-    capabilityId: "sales.whitespace.generate",
-    title: "Generate field-only whitespace report",
+    capabilityId,
+    title: capabilityId,
     kind: "action",
     mode: "propose_approve_execute",
-    inputSchemaId: "Excalibur.Action.SalesWhitespaceGenerate.Input.v1",
+    inputSchemaId: `Excalibur.Action.${capabilityId}.Input.v1`,
     outputSchemaId: "Excalibur.ExecutionReceipt.v1",
     risk: "high",
-    requiredScopes: ["sales.whitespace.generate"],
+    requiredScopes: [capabilityId],
     dataClasses: ["aggregate", "opaque_identifier"],
     approvalPolicy: {
       kind: "single_human_exact_digest",
@@ -56,7 +57,10 @@ function actionCapability(): Record<string, unknown> {
       typedProseAccepted: false,
       singleUse: true,
     },
-    executor: { kind: "deterministic", executorId: "bench.whitespace.field-only.v1" },
+    executor: {
+      kind: "deterministic",
+      executorId: expectedExcaliburExecutorId(capabilityId) ?? `test.${capabilityId}`,
+    },
     availability: { status: "locked", blockingGates: ["exact_human_approval"] },
   };
 }
@@ -119,7 +123,7 @@ test("validated control reads provide real snapshot, capabilities, and receipts 
   const paths: string[] = [];
   const capabilities = [
     ...EXCALIBUR_CONTRACT_BASELINE.viewCapabilityIds.map(readCapability),
-    actionCapability(),
+    ...EXCALIBUR_CONTRACT_BASELINE.actionCapabilityIds.map(actionCapability),
   ];
   const observation = {
     schemaVersion: EXCALIBUR_SCHEMA_VERSION,

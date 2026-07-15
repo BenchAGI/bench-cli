@@ -1,0 +1,139 @@
+{
+  "schema": "ucp.playbook/1",
+  "id": "discovery-recap-close",
+  "version": 1,
+  "title": "Discovery recap drafted for human review",
+  "implementation_status": "contract_only_until_registry_proves_effects",
+  "terminal_state": "drafted",
+  "execution_policy": {
+    "fail_closed": true,
+    "unknown_fields": "deny",
+    "external_send": "deny",
+    "external_invite": "deny",
+    "receipt_required_for_provider_draft": true
+  },
+  "data_policy": {
+    "packet_location": "approved_private_workspace",
+    "receipt_include": [
+      "opaque_tenant_ref",
+      "audience_class",
+      "draft_kind",
+      "opaque_draft_ref",
+      "health_status",
+      "receipt_refs"
+    ],
+    "receipt_exclude": [
+      "recipients",
+      "message_body",
+      "attachments",
+      "call_notes",
+      "customer_private_data",
+      "credentials"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "tenant_ref",
+      "type": "opaque_ref",
+      "required": true
+    },
+    {
+      "name": "private_call_notes_ref",
+      "type": "private_local_ref",
+      "required": true
+    },
+    {
+      "name": "audience_class",
+      "type": "non_secret_classification",
+      "required": true
+    }
+  ],
+  "steps": [
+    {
+      "id": "boot-health",
+      "kind": "effect",
+      "effect": "session.health_card",
+      "modes": ["observe"],
+      "dry_run": false,
+      "on_failure": "allow_private_local_prepare_only"
+    },
+    {
+      "id": "freeze-recap-packet",
+      "kind": "effect",
+      "effect": "packet.freeze",
+      "modes": ["prepare"],
+      "dry_run": false,
+      "assertions": [
+        "facts_and_assumptions_are_separate",
+        "owners_and_followups_are_explicit",
+        "no_credentials",
+        "no_send_authority"
+      ],
+      "on_failure": "stop"
+    },
+    {
+      "id": "mail-readiness",
+      "kind": "effect",
+      "effect": "mail.doctor",
+      "modes": ["observe"],
+      "dry_run": false,
+      "on_failure": "select_private_local_draft"
+    },
+    {
+      "id": "draft-plan",
+      "kind": "effect",
+      "effect": "mail.draft",
+      "modes": ["outbound-draft"],
+      "requires_user_presence": "when_provider_hosted_secret_is_required",
+      "dry_run": true,
+      "on_failure": "select_private_local_draft_or_stop"
+    },
+    {
+      "id": "create-draft",
+      "kind": "effect",
+      "effect": "mail.draft",
+      "modes": ["outbound-draft"],
+      "requires_user_presence": "when_provider_hosted_secret_is_required",
+      "requires_matching_dry_run": "draft-plan",
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "human-review",
+      "kind": "manual_gate",
+      "assertions": [
+        "facts_are_accurate",
+        "commitments_are_approved",
+        "recipients_are_reviewed_outside_receipt",
+        "attachments_are_reviewed",
+        "tone_is_approved"
+      ],
+      "on_failure": "remain_drafted"
+    },
+    {
+      "id": "stop-before-send",
+      "kind": "terminal_gate",
+      "assertions": [
+        "mail_send_was_not_called",
+        "external_side_effects_are_none"
+      ],
+      "on_failure": "incident"
+    }
+  ],
+  "exit_criteria": [
+    "facts_and_assumptions_are_separate",
+    "draft_contains_only_approved_commitments",
+    "mail_readiness_is_honest",
+    "draft_ref_or_private_path_is_recorded_without_content",
+    "nothing_was_sent_or_invited",
+    "human_owns_the_send_decision"
+  ],
+  "stop_conditions": [
+    "customer_facts_unverified",
+    "secret_or_unnecessary_private_data_in_draft",
+    "recipient_set_ambiguous",
+    "OUTBOUND_SEND_DENIED",
+    "RECEIPT_WRITE_FAILED"
+  ],
+  "forbidden_effects": ["mail.send"]
+}

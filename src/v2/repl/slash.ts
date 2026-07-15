@@ -43,6 +43,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
 // ExcaliburSidecarRuntime serves these through the same validated control reads
 // used by the top-level CLI commands.
 export const EXCALIBUR_SLASH_COMMANDS: readonly SlashCommand[] = [
+  { name: "might", summary: "Show MIGHT posture and capability-specific health" },
+  {
+    name: "orchestra",
+    usage: "/orchestra init <absolute-mission-json> | status <mission-id> | advance <mission-id> <exact-mission-digest> | propose <mission-id> <absolute-details-json>",
+    summary: "Run one pinned Pattern A mission through its exact draft-publication proposal",
+  },
   { name: "pulse", summary: "Show the authoritative Pulse observation" },
   { name: "decisions", summary: "Show approval and decision aggregates" },
   { name: "forge", summary: "Show Forge observation and dispatch posture" },

@@ -2,13 +2,13 @@
 // @bench/excalibur-control-contracts sidecar mirror. Do not edit by hand.
 export const EXCALIBUR_CONTRACT_BASELINE = Object.freeze({
     "generatorVersion": 1,
-    "sourceMirrorDigest": "53b2f9730d6baac40f47fa029361cf35c643a0f753ddbd0e5ee3ab561c487996",
+    "sourceMirrorDigest": "b464aa28162a52986073983894410c07ea183204f71dd639412cc133e1c479e8",
     "protocolVersion": "excalibur-control.v1",
     "schemaVersion": "1.0.0",
-    "manifestVersion": "2026-07-13",
+    "manifestVersion": "2026-07-14",
     "digests": {
         "protocol": "4f5bccd114715c4c3f53b0122b340ffcd1005e04dcf7bb3fefc4ef881d469014",
-        "manifest": "d60fa0859894f57777a1c03654977b84d38ec8f3fa5c1e4e07d8424f2a973efb",
+        "manifest": "b57e2aaea24b5dea050a8b2617bba45e0373ff8992bef2d028f58a3c9fd5bd14",
         "routing": "2edf201ac818ddb2a48296f7a0cf7dcedfaa271b414e7cd5e1697be7094049c6"
     },
     "viewCapabilityIds": [
@@ -27,9 +27,15 @@ export const EXCALIBUR_CONTRACT_BASELINE = Object.freeze({
         "finance"
     ],
     "actionCapabilityIds": [
-        "sales.whitespace.generate"
-    ]
+        "sales.whitespace.generate",
+        "github.draft_pr.publish.v1"
+    ],
+    "actionExecutorIds": {
+        "sales.whitespace.generate": "bench.whitespace.field-only.v1",
+        "github.draft_pr.publish.v1": "excalibur.sidecar.github-draft-pr.v1"
+    }
 });
 export const EXCALIBUR_EXPECTED_DIGESTS = EXCALIBUR_CONTRACT_BASELINE.digests;
 export const EXCALIBUR_VIEW_CAPABILITY_IDS = EXCALIBUR_CONTRACT_BASELINE.viewCapabilityIds;
 export const EXCALIBUR_ACTION_CAPABILITY_IDS = EXCALIBUR_CONTRACT_BASELINE.actionCapabilityIds;
+export const EXCALIBUR_ACTION_EXECUTOR_IDS = Object.freeze({ ...EXCALIBUR_CONTRACT_BASELINE.actionExecutorIds });

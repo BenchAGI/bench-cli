@@ -8,9 +8,14 @@ import { loadAccount } from "../launcher/account.js";
 import { EntitlementResolutionError, resolveEntitledAgents } from "../launcher/entitlements.js";
 import { c, println } from "../render/ansi.js";
 import { resolveStateScope, scopeDirectory } from "../state/scope.js";
+import { runUcpCommand } from "../ucp/cli.js";
+import { collectSessionHealthCard, renderSessionHealthCard } from "../ucp/health.js";
+import { EffectRegistry } from "../ucp/registry.js";
 import { activateTenantCloudReadOnly, runExcaliburConversation, } from "./conversation.js";
 import { renderCapabilities, renderReceiptPage, renderSnapshot } from "./control-render.js";
 import { ExcaliburHttpTransport, resolveSidecarConnection } from "./http-transport.js";
+import { inspectExcaliburLaunchers, verifyCanonicalLauncherManifest, } from "./launcher-integrity.js";
+import { resolveOrchestraBrokerConfig } from "./orchestra-broker.js";
 import { disableOperatorCalendar, parseOperatorCalendarConfigureArgs, readOperatorCalendarConfig, renderOperatorCalendarStatus, writeOperatorCalendarConfig, } from "./operator-calendar.js";
 import { disableOperatorMemory, parseOperatorMemoryConfigureArgs, readOperatorMemoryConfig, renderOperatorMemoryStatus, writeOperatorMemoryConfig, } from "./operator-memory.js";
 import { renderOneSurfaceStartupBrief, renderSidecarMemoryStatus, summarizeOneSurfaceReadiness, } from "./readiness.js";
@@ -20,6 +25,12 @@ const COMMANDS = new Set([
     "resume",
     "sessions",
     "context",
+    "health",
+    "effects",
+    "effect",
+    "grant",
+    "grants",
+    "might",
     "views",
     "actions",
     "receipts",
@@ -32,6 +43,7 @@ const COMMANDS = new Set([
     "version",
     "help",
 ]);
+const UCP_COMMANDS = new Set(["health", "effects", "effect", "grant", "grants"]);
 export async function runExcalibur(argv) {
     const parsed = parseArgs(argv);
     if (parsed.version || parsed.command === "version") {
@@ -47,11 +59,18 @@ export async function runExcalibur(argv) {
         return;
     }
     const env = process.env;
+    if (parsed.command && UCP_COMMANDS.has(parsed.command)) {
+        await runUcpCommand(parsed.command, parsed.positional, env);
+        return;
+    }
     const scope = await resolveStateScope({ env });
     const state = await loadExcaliburState({ scope, env });
     switch (parsed.command) {
         case "context":
             await runContext(parsed.positional, scope, state, env);
+            return;
+        case "might":
+            await runMight(parsed, scope, state, env);
             return;
         case "sessions":
             printSessions(state);
@@ -72,7 +91,7 @@ export async function runExcalibur(argv) {
             return;
         }
         case "seats":
-            await printSeats(scope, env);
+            await printSeats(parsed, scope, state, env);
             return;
         case "providers":
             await runProviders(parsed.positional, scope, env);
@@ -97,6 +116,7 @@ export async function runExcalibur(argv) {
             if (!allowed.includes(session.contextId)) {
                 throw Object.assign(new Error("session context is not available to the current principal and instance"), { exitCode: 13 });
             }
+            await printUcpBootHealth(env);
             await runExcaliburConversation({
                 env,
                 scope,
@@ -131,6 +151,7 @@ async function launchConversation(parsed, scope, state, env, message) {
     if (!allowed.includes(state.selectedContext)) {
         throw Object.assign(new Error(`selected context ${state.selectedContext} is outside the current principal/instance boundary; run \`excalibur context use operator-local\``), { exitCode: 13 });
     }
+    await printUcpBootHealth(env);
     await runExcaliburConversation({
         env,
         scope,
@@ -142,6 +163,21 @@ async function launchConversation(parsed, scope, state, env, message) {
         sidecarUrl: parsed.sidecarUrl,
         traceFramesPath: parsed.traceFramesPath,
     });
+}
+async function printUcpBootHealth(env) {
+    try {
+        const execution = await new EffectRegistry({ env }).execute({ effectId: "session.health_card", input: {} });
+        const card = execution.result.output;
+        if (!card)
+            throw new Error("health card absent");
+        for (const [index, line] of renderSessionHealthCard(card).entries()) {
+            println(index === 0 ? c.bold(line) : c.dim(line));
+        }
+        println(c.dim(`  health receipt: ${execution.receipt.receiptId}`));
+    }
+    catch {
+        println(c.red("UCP session health unavailable · full onboarding/publish capability must not be claimed"));
+    }
 }
 async function readPipedPrompt() {
     process.stdin.setEncoding("utf8");
@@ -240,10 +276,27 @@ async function resolveControlReadTransport(parsed, scope, state, env) {
         return transport;
     }
 }
-async function printSeats(scope, env) {
+async function printSeats(parsed, scope, state, env) {
     println(c.bold("Inference seats"));
-    println(`  ${c.green("canonical")} shared Excalibur sidecar  ${c.dim("desktop-owned conversation and ordered event ledger")}`);
-    println(`  ${c.green("enforced")} Grok ACP via sidecar only  ${c.dim("direct provider launch is disabled")}`);
+    const transport = await resolveControlReadTransport(parsed, scope, state, env);
+    const [controlSession, snapshot, capabilities] = await Promise.all([
+        transport.getControlSession(),
+        transport.getSnapshot(),
+        transport.getCapabilities(),
+    ]);
+    const readiness = summarizeOneSurfaceReadiness({ controlSession, snapshot, capabilities });
+    println(`  posture: ${readiness.posture} · ${transport.posture === "sidecar" ? "shared sidecar" : "authenticated cloud read-only"}`);
+    for (const seat of readiness.health.seats) {
+        const model = seat.servedModel
+            ? `${seat.provider || "provider"}:${seat.servedModel}`
+            : "model/attestation unavailable";
+        println(`  ${seat.state.padEnd(11)} ${seat.role}/${seat.seatId} · ${model}`);
+        if (seat.requestedModel)
+            println(c.dim(`    requested: ${seat.requestedModel} · served: ${seat.servedModel || "unavailable"}`));
+        if (seat.attestationDigest)
+            println(c.dim(`    attestation: ${seat.attestationDigest}`));
+    }
+    println(`  ${c.green("enforced")} conductor routing  ${c.dim("sidecar only · direct provider launch disabled")}`);
     try {
         const firebaseToken = await loadFreshFirebaseIdToken().catch(() => null);
         const entitled = await resolveEntitledAgents({ env, scope, firebaseToken });
@@ -253,7 +306,42 @@ async function printSeats(scope, env) {
     catch (error) {
         println(`  ${c.red("blocked")} cloud read-only  ${c.dim(error.message)}`);
     }
-    println(`  ${c.yellow("preview")} Claude / Codex rotation  ${c.dim("declared but not routed by this preview")}`);
+    if (readiness.health.seats.length === 2 && readiness.health.seats[1]?.seatId === "support-seat-roster") {
+        println(`  ${c.yellow("degraded")} supporting model seats  ${c.dim("no authoritative planner/builder/adversary roster returned")}`);
+    }
+}
+async function runMight(parsed, scope, state, env) {
+    const transport = await resolveControlReadTransport(parsed, scope, state, env);
+    const memoryStatus = transport.posture === "sidecar"
+        ? await transport.getMemoryStatus().catch(() => null)
+        : null;
+    const [controlSession, snapshot, capabilities, receiptProbe] = await Promise.all([
+        transport.getControlSession(),
+        transport.getSnapshot(),
+        transport.getCapabilities(),
+        transport.getReceipts({ limit: 1 })
+            .then((page) => ({ page, error: null }))
+            .catch((error) => ({ page: null, error: error.message })),
+    ]);
+    const lines = renderOneSurfaceStartupBrief(summarizeOneSurfaceReadiness({
+        controlSession,
+        snapshot,
+        capabilities,
+        memoryStatus,
+        receiptPage: receiptProbe.page,
+        receiptProbeError: receiptProbe.error,
+    })).map((line, index) => index === 0 ? line.replace("startup", "status") : line);
+    const [orchestra, mail] = await Promise.all([
+        resolveOrchestraBrokerConfig(env),
+        collectSessionHealthCard({ env }).then((card) => card.lines.filter((line) => line.id.startsWith("mail."))),
+    ]);
+    lines.push("  Hands · local authority extensions");
+    lines.push("reason" in orchestra
+        ? `    blocked     orchestra · ${orchestra.reason} · no fallback`
+        : `    ready       orchestra · wrapper ${orchestra.brokerSha256} · resources ${orchestra.resourceSetDigest} · preflight ${orchestra.preflightAttestationDigest}`);
+    for (const item of mail)
+        lines.push(`    ${item.state.padEnd(11)} ${item.id} · ${item.summary}`);
+    printControlLines(lines);
 }
 async function runProviders(args, scope, env) {
     if ((args[0] || "status") !== "status") {
@@ -372,20 +460,45 @@ async function actualCliEntry(raw = process.argv[1]) {
 export function legacyBenchExcaliburWarning(resolution) {
     if (!resolution.winner)
         return null;
-    return `${resolution.winner} excalibur is the legacy Aurelius shadow conductor; it cannot attach to the Excalibur One-Surface sidecar or shared conversation`;
+    return `\`${resolution.winner} excalibur\` is a legacy Aurelius shadow-conductor path; use the standalone \`excalibur\` binary for the shared One-Surface conversation`;
 }
 async function runDoctor(parsed, scope, state, env) {
-    let failed = false;
+    let coreFailed = false;
     const binary = await actualCliEntry();
     const pathResolutions = await inspectCliPathShadows(env);
+    const launcherInspections = await inspectExcaliburLaunchers(env, parsed.launchCheck ? binary : undefined);
     const excaliburPath = pathResolutions.find((item) => item.name === "excalibur");
+    let canonicalLauncherVerified = false;
     println(`excalibur ${CLI_VERSION} doctor`);
     println(c.green(`✓ CLI identity: excalibur ${CLI_VERSION}`));
     println(c.dim(`  actual binary: ${binary}`));
     const directExcaliburTargets = excaliburPath?.realTargets.filter((item) => item.endsWith("/excalibur.mjs")) || [];
     if (excaliburPath?.winner && directExcaliburTargets.length > 0 && !directExcaliburTargets.includes(binary)) {
-        failed = true;
-        println(c.red(`✗ PATH launches ${excaliburPath.winner}, not this One-Surface binary`));
+        if (parsed.launchCheck)
+            println(c.yellow(`⚠ PATH launches ${excaliburPath.winner}; toolbar manifest must prove its pinned entry`));
+        else {
+            coreFailed = true;
+            println(c.red(`✗ PATH launches ${excaliburPath.winner}, not this One-Surface binary`));
+        }
+    }
+    if (parsed.launchCheck) {
+        const manifestPath = env.EXCALIBUR_CANONICAL_LAUNCH_MANIFEST;
+        if (!manifestPath) {
+            coreFailed = true;
+            println(c.red("✗ canonical launcher manifest is absent; refusing to claim toolbar readiness"));
+        }
+        else {
+            try {
+                const manifest = await verifyCanonicalLauncherManifest(manifestPath, binary);
+                canonicalLauncherVerified = true;
+                println(c.green(`✓ canonical launcher manifest verified · ${manifest.surface} · sidecar required`));
+                println(c.dim(`  ${manifestPath}`));
+            }
+            catch (error) {
+                coreFailed = true;
+                println(c.red(`✗ canonical launcher manifest rejected: ${error.message}`));
+            }
+        }
     }
     try {
         if (state.selectedContext !== "operator-local" && state.selectedContext !== scope.instanceId) {
@@ -408,14 +521,26 @@ async function runDoctor(parsed, scope, state, env) {
                 : undefined,
         });
         const controlSession = await transport.getControlSession();
-        // This call initializes and verifies the content-free memory adapter status.
-        // Read the snapshot afterwards so doctor never reports the pre-load projection.
-        const memoryStatus = await transport.getMemoryStatus();
-        const [snapshot, capabilities] = await Promise.all([
+        // Optional adapters degrade only their own capability. Snapshot,
+        // capability manifest, session, and digests remain canonical core gates.
+        const memoryProbe = await transport.getMemoryStatus()
+            .then((value) => ({ value, error: null }))
+            .catch((error) => ({ value: null, error: error.message }));
+        const [snapshot, capabilities, receiptProbe] = await Promise.all([
             transport.getSnapshot(),
             transport.getCapabilities(),
+            transport.getReceipts({ limit: 1 })
+                .then((page) => ({ page, error: null }))
+                .catch((error) => ({ page: null, error: error.message })),
         ]);
-        const readiness = summarizeOneSurfaceReadiness({ controlSession, snapshot, capabilities, memoryStatus });
+        const readiness = summarizeOneSurfaceReadiness({
+            controlSession,
+            snapshot,
+            capabilities,
+            memoryStatus: memoryProbe.value,
+            receiptPage: receiptProbe.page,
+            receiptProbeError: receiptProbe.error,
+        });
         println(c.green(`✓ shared Excalibur sidecar control and capability manifest verified (${sidecar.baseUrl})`));
         println(c.dim(`  protocol digest: ${controlSession.digests.protocol}`));
         println(c.dim(`  manifest digest: ${controlSession.digests.manifest}`));
@@ -425,38 +550,57 @@ async function runDoctor(parsed, scope, state, env) {
         println(c.bold(brief[0].replace("startup", "diagnostic")));
         for (const line of brief.slice(1))
             println(c.dim(line));
-        if (readiness.servedModel !== "grok-4.5" || readiness.conversationState !== "active") {
-            failed = true;
-            println(c.red("✗ shared conversation lacks exact active Grok 4.5 served-model attestation"));
+        if (!readiness.coreReady) {
+            coreFailed = true;
+            println(c.red(`✗ One-Surface core blocked: ${readiness.coreBlockers.join(", ")}`));
         }
         else {
-            println(c.green("✓ shared conversation and Grok 4.5 served-model attestation ready"));
+            println(c.green(`✓ canonical posture ${readiness.posture} · exact sidecar/model/contract core ready`));
         }
-        if (readiness.schedules.freshness === "unavailable") {
-            failed = true;
-            println(c.red("✗ schedules projection unavailable"));
+        for (const check of [
+            readiness.health.ledger,
+            readiness.health.worktree,
+            readiness.health.publisher,
+            readiness.health.memory,
+            readiness.health.schedules,
+        ]) {
+            const line = `${check.id}: ${check.state} · ${check.detail}`;
+            println(check.state === "ready" ? c.green(`✓ ${line}`) : c.yellow(`⚠ ${line}`));
+            if (check.remediation)
+                println(c.dim(`  remediation: ${check.remediation}`));
         }
-        else {
-            println(c.green(`✓ schedules projection ${readiness.schedules.freshness}`));
-        }
-        if (readiness.memory.state !== "available") {
-            failed = true;
-            println(c.red(`✗ sidecar memory adapter ${readiness.memory.state}`));
-        }
-        else {
-            println(c.green(`✓ sidecar memory adapter available (${readiness.memory.adapter}/${readiness.memory.mode})`));
-        }
+        if (memoryProbe.error)
+            println(c.dim(`  memory probe: ${memoryProbe.error}`));
     }
     catch (error) {
-        failed = true;
+        coreFailed = true;
         println(c.red(`✗ shared Excalibur sidecar blocked: ${error.message}`));
     }
     println(c.green("✓ direct Grok ACP launch disabled; all Grok chat is sidecar-owned"));
+    const orchestra = await resolveOrchestraBrokerConfig(env);
+    if ("reason" in orchestra) {
+        println(c.yellow(`⚠ Pattern A orchestra unavailable: ${orchestra.reason}`));
+        println(c.dim("  /orchestra init|status|advance|propose invokes no fallback"));
+    }
+    else {
+        println(c.green(`✓ Pattern A orchestra broker verified: ${orchestra.executable}`));
+        println(c.dim(`  owner-private config: ${orchestra.configPath}`));
+        println(c.dim(`  broker sha256: ${orchestra.brokerSha256}`));
+        println(c.dim(`  Pattern A resource set: ${orchestra.resourceSetDigest}`));
+        println(c.dim(`  owner-private state root: ${orchestra.stateRoot}`));
+        println(c.dim(`  closure preflight attestation: ${orchestra.preflightAttestationDigest}`));
+    }
+    const mailLines = (await collectSessionHealthCard({ env })).lines
+        .filter((line) => line.id.startsWith("mail."));
+    for (const line of mailLines) {
+        const rendered = `${line.id}: ${line.state} · ${line.summary}`;
+        println(line.state === "ready" ? c.green(`✓ ${rendered}`) : c.yellow(`⚠ ${rendered}`));
+    }
     const mode = await stateFileMode({ scope, env });
     if (mode === 0o600)
         println(c.green(`✓ scoped state private (0600)`));
     else {
-        failed = true;
+        coreFailed = true;
         println(c.red(`✗ scoped state mode is ${mode == null ? "missing" : mode.toString(8)}; expected 600`));
     }
     println(c.dim(`  ${scopeDirectory(scope, env)}`));
@@ -469,8 +613,7 @@ async function runDoctor(parsed, scope, state, env) {
                 println(c.dim(line));
         }
         catch (error) {
-            failed = true;
-            println(c.red(`✗ operator memory configuration unsafe: ${error.message}`));
+            println(c.yellow(`⚠ memory capability degraded: ${error.message}`));
         }
         try {
             const calendar = await readOperatorCalendarConfig(env);
@@ -480,8 +623,7 @@ async function runDoctor(parsed, scope, state, env) {
                 println(c.dim(line));
         }
         catch (error) {
-            failed = true;
-            println(c.red(`✗ operator calendar configuration unsafe: ${error.message}`));
+            println(c.yellow(`⚠ calendar capability degraded: ${error.message}`));
         }
     }
     else {
@@ -496,30 +638,53 @@ async function runDoctor(parsed, scope, state, env) {
             println(c.green(`✓ authenticated entitlements bound (${entitled.length} agent(s))`));
     }
     catch (error) {
-        failed = true;
         const label = error instanceof EntitlementResolutionError ? error.message : error.message;
-        println(c.red(`✗ cloud entitlements blocked: ${label}`));
+        println(c.yellow(`⚠ tenant cloud-read capability degraded: ${label}`));
     }
     const benchResolution = pathResolutions.find((item) => item.name === "bench");
     const legacyWarning = benchResolution ? legacyBenchExcaliburWarning(benchResolution) : null;
     if (legacyWarning)
         println(c.yellow(`⚠ ${legacyWarning}`));
+    for (const launcher of launcherInspections) {
+        if (launcher.classification === "canonical") {
+            println(c.green(`✓ canonical toolbar bundle: ${launcher.appPath}`));
+        }
+        else {
+            println(c.yellow(`⚠ non-canonical Excalibur toolbar bundle: ${launcher.appPath}`));
+            for (const issue of launcher.issues)
+                println(c.dim(`  ${issue}`));
+            println(c.dim("  do not use this bundle for a One-Surface test drive"));
+        }
+    }
     for (const resolution of pathResolutions) {
         if (!resolution.winner) {
             println(c.yellow(`⚠ ${resolution.name} is not on PATH`));
-            if (resolution.name === "excalibur")
-                failed = true;
+            if (resolution.name === "excalibur" && !(parsed.launchCheck && canonicalLauncherVerified))
+                coreFailed = true;
             continue;
         }
         if (resolution.shadowed) {
-            failed = true;
-            println(c.red(`✗ ${resolution.name} PATH shadow: ${resolution.candidates.join(" → ")}`));
+            if (resolution.name === "excalibur") {
+                if (parsed.launchCheck && canonicalLauncherVerified) {
+                    println(c.yellow(`⚠ terminal PATH has an Excalibur shadow, but this toolbar launch is exact-entry pinned: ${resolution.candidates.join(" → ")}`));
+                }
+                else {
+                    coreFailed = true;
+                    println(c.red(`✗ ${resolution.name} PATH shadow: ${resolution.candidates.join(" → ")}`));
+                }
+            }
+            else {
+                println(c.yellow(`⚠ compatibility command ${resolution.name} has a PATH shadow: ${resolution.candidates.join(" → ")}`));
+            }
         }
         else {
             println(c.green(`✓ ${resolution.name} resolves to ${resolution.winner}`));
         }
     }
-    if (failed)
+    println(coreFailed
+        ? c.red("MIGHT result: core blocked · SHADOW only · no canonical launch claim")
+        : c.green("MIGHT result: canonical core ready · optional capability degradation shown above"));
+    if (coreFailed)
         process.exitCode = 1;
 }
 function parseArgs(argv) {
@@ -529,6 +694,7 @@ function parseArgs(argv) {
         classic: false,
         full: false,
         noThinking: false,
+        launchCheck: false,
         help: false,
         version: false,
     };
@@ -544,6 +710,10 @@ function parseArgs(argv) {
         }
         if (arg === "--no-thinking") {
             out.noThinking = true;
+            continue;
+        }
+        if (arg === "--launch-check") {
+            out.launchCheck = true;
             continue;
         }
         if (arg === "--help" || arg === "-h") {
@@ -584,6 +754,10 @@ function parseArgs(argv) {
             out.positional.push(arg);
             continue;
         }
+        if (out.command && UCP_COMMANDS.has(out.command)) {
+            out.positional.push(arg);
+            continue;
+        }
         if (arg.startsWith("-") && !(out.command === "auth" && arg === "--paste")) {
             throw Object.assign(new Error(`unknown option: ${arg}`), { exitCode: 2 });
         }
@@ -604,8 +778,14 @@ Usage:
   excalibur sessions                list scoped sessions
   excalibur context list            list principal/instance-safe contexts
   excalibur context use <id>        select operator-local or the bound instance
+  excalibur health [--json]         full UCP health card + value-free receipt
+  excalibur effects [--json]        typed effect registry and authorization modes
+  excalibur effect <id> ...         run one typed effect from a JSON request file
+  excalibur grant issue ...         Touch ID-gated protected capability grant (≤15m)
+  excalibur grants [--json]         list open grants
+  excalibur might                   MIGHT posture and capability-specific health
   excalibur views                   read authoritative aggregate observations
-  excalibur actions                 read capabilities and every blocking gate
+  excalibur actions                 typed actions, exact gates, and deterministic executors
   excalibur receipts                read deterministic execution receipts
   excalibur seats                   show inference seats and rotation readiness
   excalibur providers status        provider and entitlement status
@@ -616,7 +796,7 @@ Usage:
   excalibur calendar configure ...  consent to operator-thread schedule summaries
   excalibur calendar disable        disable the operator calendar adapter
   excalibur auth <login|logout|status>
-  excalibur doctor                  provider, state, entitlement, and PATH checks
+  excalibur doctor                  MIGHT posture, component health, contracts, and launchers
   excalibur version
 
 Flags:
@@ -633,6 +813,14 @@ Safety:
   approvals, and effects lock. Direct Grok ACP launch is disabled.
   Calendar and memory configuration are 0600 operator-only state. The CLI never
   calls gog; account, calendar, and shelf identifiers are never printed by status.
+  Posture is explicit: SHADOW reads, PREPARE conducts, WIELD executes a typed
+  approval-bound action, and LAND exists only when a separately manifested
+  landing capability is available. No posture is inferred from conversational prose.
+
+Toolbar:
+  Only Excalibur One Surface.app with an exact embedded launcher manifest is
+  canonical. Every click runs doctor --launch-check before chat. Excalibur CLI
+  Preview.app is a legacy shadow conductor and is never treated as ready.
 
 Compatibility:
   excalibur is the canonical command. In beta.15, benchagi and bench remain

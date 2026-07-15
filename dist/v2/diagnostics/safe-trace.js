@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const REDACTED = "[REDACTED]";
-const SENSITIVE_KEY = /(?:authorization|cookie|credential|password|secret|token|api[-_]?key|cloudAuth)/i;
+const SENSITIVE_KEY = /(?:authorization|cookie|credential|password|secret|token|nonce|api[-_]?key|cloudAuth)/i;
 const CONTENT_KEY = /^(?:message|text|content|prompt|input|output|result|raw|data|payload|arguments|args)$/i;
 function boundedTtl(value) {
     if (!Number.isFinite(value) || Number(value) <= 0)

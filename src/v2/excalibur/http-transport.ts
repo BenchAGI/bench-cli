@@ -4,12 +4,26 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
+  EXCALIBUR_ACTION_EXECUTOR_IDS,
   EXCALIBUR_CONTRACT_BASELINE,
   EXCALIBUR_EXPECTED_DIGESTS,
 } from "./contract-baseline.js";
 
 export const EXCALIBUR_PROTOCOL_VERSION = EXCALIBUR_CONTRACT_BASELINE.protocolVersion;
 export const EXCALIBUR_SCHEMA_VERSION = EXCALIBUR_CONTRACT_BASELINE.schemaVersion;
+export const EXCALIBUR_WHITESPACE_ACTION_ID = "sales.whitespace.generate" as const;
+export const EXCALIBUR_DRAFT_PR_ACTION_ID = "github.draft_pr.publish.v1" as const;
+export const EXCALIBUR_WHITESPACE_EXECUTOR_ID = EXCALIBUR_ACTION_EXECUTOR_IDS[EXCALIBUR_WHITESPACE_ACTION_ID];
+export const EXCALIBUR_DRAFT_PR_EXECUTOR_ID = EXCALIBUR_ACTION_EXECUTOR_IDS[EXCALIBUR_DRAFT_PR_ACTION_ID];
+export const EXCALIBUR_CANONICAL_EXECUTOR_BY_ACTION = EXCALIBUR_ACTION_EXECUTOR_IDS;
+
+export function expectedExcaliburExecutorId(actionId: string): string | null {
+  return Object.hasOwn(EXCALIBUR_CANONICAL_EXECUTOR_BY_ACTION, actionId)
+    ? EXCALIBUR_CANONICAL_EXECUTOR_BY_ACTION[
+      actionId as keyof typeof EXCALIBUR_CANONICAL_EXECUTOR_BY_ACTION
+    ]
+    : null;
+}
 
 export const EXCALIBUR_CONTROL_PATHS = Object.freeze({
   session: "/api/v1/excalibur/control/session",
@@ -121,25 +135,53 @@ export type ExcaliburMemoryPosture = {
   contentIncluded: false;
 };
 
+export type ExcaliburActionId = string;
+
+export type ExcaliburWhitespaceTarget = { resourceType: "sales_whitespace_report" };
+export type ExcaliburWhitespacePayload = {
+  mode: "field-only";
+  maximumDeals: number;
+  thresholdProfileDigest: string;
+  stageSetDigest: string;
+  destinationDigest: string;
+  retentionDays: number;
+};
+
+export type ExcaliburDraftPrTarget = {
+  resourceType: "github_draft_pull_request";
+  repository: string;
+};
+export type ExcaliburDraftPrPayload = {
+  worktreePath: string;
+  remoteName: "origin";
+  baseRef: string;
+  baseSha: string;
+  headRef: string;
+  headSha: string;
+  patchDigest: string;
+  changedPathsDigest: string;
+  packetDigest: string;
+  missionId: string;
+  missionDigest: string;
+  publicationGateDigest: string;
+  title: string;
+  body: string;
+  labels: string[];
+  draftOnly: true;
+};
+
 export type ExcaliburProposal = {
   schemaVersion: typeof EXCALIBUR_SCHEMA_VERSION;
   proposalId: string;
   commandId: string;
   conversationId: string;
   instanceId: string;
-  actionId: "sales.whitespace.generate";
-  target: { resourceType: "sales_whitespace_report" };
-  payload: {
-    mode: "field-only";
-    maximumDeals: number;
-    thresholdProfileDigest: string;
-    stageSetDigest: string;
-    destinationDigest: string;
-    retentionDays: number;
-  };
+  actionId: ExcaliburActionId;
+  target: Record<string, unknown>;
+  payload: Record<string, unknown>;
   payloadDigest: string;
   proposalDigest: string;
-  resourceFingerprints: Record<string, string>;
+  resourceFingerprints: Record<string, string | number>;
   policyResult: { decision: "allow" | "deny"; policyDigest: string; reasons: string[] };
   idempotencyKey: string;
   approvalId: string;
@@ -156,6 +198,8 @@ export type ExcaliburApproval = {
   decision: "pending" | "approved" | "denied" | "expired";
   grantedScope: string[];
   singleUse: true;
+  /** Secret, single-use confirmation material. Never render or persist this value. */
+  confirmationNonce?: string;
   decidedAt?: string;
   expiresAt: string;
 };
@@ -168,13 +212,13 @@ export type ExcaliburExecutionReceipt = {
   approvalId: string;
   conversationId: string;
   instanceId: string;
-  actionId: "sales.whitespace.generate";
+  actionId: ExcaliburActionId;
   executorId: string;
-  outcome: "accepted" | "running" | "succeeded" | "failed" | "expired" | "reconciled";
+  outcome: "accepted" | "running" | "succeeded" | "failed" | "expired" | "indeterminate" | "reconciled";
   idempotencyKey: string;
   inputDigest: string;
   evidenceRefs: string[];
-  result: { runId?: string; rowCount?: number; outputDigest?: string; errorCode?: string };
+  result: Record<string, unknown>;
   occurredAt: string;
 };
 
@@ -182,6 +226,34 @@ export type ExcaliburReceiptPage = { receipts: ExcaliburExecutionReceipt[]; next
 export type ExcaliburApprovalDecisionInput = {
   decision: "approved" | "denied";
   proposalDigest: string;
+  confirmationNonce?: string;
+};
+
+export type ExcaliburProposalIntent = {
+  actionId: ExcaliburActionId;
+  target: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  idempotencyKey: string;
+};
+
+export type ExcaliburCreateProposalInput = {
+  conversationId: string;
+  intent: ExcaliburProposalIntent;
+};
+
+export type ExcaliburCreateProposalResult = {
+  proposal: ExcaliburProposal;
+  approval: ExcaliburApproval;
+  receipt: ExcaliburExecutionReceipt | null;
+  replayed: boolean;
+};
+
+export type ExcaliburApprovalDecisionResult = {
+  approval: ExcaliburApproval;
+  proposal: ExcaliburProposal | null;
+  receipt: ExcaliburExecutionReceipt | null;
+  executionUnconfirmed: boolean;
+  replayed: boolean;
 };
 
 export type ExcaliburConversationSession = {
@@ -248,7 +320,13 @@ export type SidecarConnection = { baseUrl: string; token: string; tokenSource: "
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_RE = /^[a-f0-9]{64}$/;
+const GIT_SHA_RE = /^[a-f0-9]{40}$/;
+const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GITHUB_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const PULL_REQUEST_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/;
+const CONFIRMATION_NONCE_RE = /^[A-Za-z0-9_-]{43}$/;
 const INSTANCE_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const PATTERN_A_MISSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const EVENT_TYPES = new Set<ExcaliburConversationEvent["type"]>([
   "turn.accepted",
@@ -306,6 +384,51 @@ function isTimestamp(value: unknown): value is string {
 function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= 160
     && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function isSafeJson(value: unknown, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return typeof value !== "string" || (value.length <= 128_000 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value));
+  }
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length <= 2_000 && value.every((item) => isSafeJson(item, depth + 1));
+  if (!isRecord(value) || Object.keys(value).length > 256) return false;
+  return Object.entries(value).every(([key, item]) => (
+    key.length >= 1 && key.length <= 160 && !/[\u0000-\u001f\u007f]/.test(key)
+      && !["__proto__", "prototype", "constructor"].includes(key)
+      && isSafeJson(item, depth + 1)
+  ));
+}
+
+function canonicalSafeJson(value: unknown): string {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new ExcaliburTransportError("BAD_CONTRACT", "proposal JSON is not finite");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalSafeJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalSafeJson(value[key])}`
+    )).join(",")}}`;
+  }
+  throw new ExcaliburTransportError("BAD_CONTRACT", "proposal JSON contains an unsupported value");
+}
+
+function isBoundedText(value: unknown, maximum: number, minimum = 1): value is string {
+  return typeof value === "string" && value.length >= minimum && value.length <= maximum
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function isAbsoluteWorktreePath(value: unknown): value is string {
+  return isBoundedText(value, 1_024) && value.startsWith("/") && !value.split("/").includes("..");
+}
+
+function isRepository(value: unknown): value is string {
+  return isBoundedText(value, 200, 3) && REPOSITORY_RE.test(value);
 }
 
 function uniqueIdentifiers(value: unknown, minimum = 0): value is string[] {
@@ -466,6 +589,15 @@ function parseCapability(value: unknown): ExcaliburCapability {
         || value.approvalPolicy.kind !== "single_human_exact_digest" || value.executor.kind !== "deterministic"))) {
     throw new ExcaliburTransportError("BAD_CONTRACT", "capability authority lanes are inconsistent");
   }
+  const expectedExecutorId = expectedExcaliburExecutorId(String(value.capabilityId));
+  if (expectedExecutorId !== null
+      && (value.executor.kind !== "deterministic"
+        || value.executor.executorId !== expectedExecutorId)) {
+    throw new ExcaliburTransportError(
+      "BAD_CONTRACT",
+      `${String(value.capabilityId)} must bind ${expectedExecutorId}`,
+    );
+  }
   return value as ExcaliburCapability;
 }
 
@@ -564,7 +696,7 @@ function parseMemoryPosture(
   return value as ExcaliburMemoryPosture;
 }
 
-function validWhitespacePayload(value: unknown): value is ExcaliburProposal["payload"] {
+function validWhitespacePayload(value: unknown): value is ExcaliburWhitespacePayload {
   return isRecord(value)
     && exactKeys(value, [
       "mode", "maximumDeals", "thresholdProfileDigest", "stageSetDigest",
@@ -580,6 +712,112 @@ function validWhitespacePayload(value: unknown): value is ExcaliburProposal["pay
     && Number(value.retentionDays) <= 90;
 }
 
+function validDraftPrTarget(value: unknown): value is ExcaliburDraftPrTarget {
+  return isRecord(value)
+    && exactKeys(value, ["resourceType", "repository"])
+    && value.resourceType === "github_draft_pull_request"
+    && isRepository(value.repository);
+}
+
+function validDraftPrPayload(value: unknown): value is ExcaliburDraftPrPayload {
+  if (!isRecord(value) || !exactKeys(value, [
+    "worktreePath", "remoteName", "baseRef", "baseSha", "headRef", "headSha",
+    "patchDigest", "changedPathsDigest", "packetDigest", "missionId", "missionDigest",
+    "publicationGateDigest", "title", "body", "labels", "draftOnly",
+  ])) return false;
+  return isAbsoluteWorktreePath(value.worktreePath)
+    && value.remoteName === "origin"
+    && isBoundedText(value.baseRef, 200, 2)
+    && isBoundedText(value.headRef, 200, 2)
+    && value.baseRef !== value.headRef
+    && GIT_SHA_RE.test(String(value.baseSha || ""))
+    && GIT_SHA_RE.test(String(value.headSha || ""))
+    && value.baseSha !== value.headSha
+    && DIGEST_RE.test(String(value.patchDigest || ""))
+    && DIGEST_RE.test(String(value.changedPathsDigest || ""))
+    && DIGEST_RE.test(String(value.packetDigest || ""))
+    && PATTERN_A_MISSION_ID_RE.test(String(value.missionId || ""))
+    && DIGEST_RE.test(String(value.missionDigest || ""))
+    && DIGEST_RE.test(String(value.publicationGateDigest || ""))
+    && isBoundedText(value.title, 256)
+    && typeof value.body === "string" && value.body.length <= 32_768
+    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.body)
+    && uniqueIdentifiers(value.labels)
+    && (value.labels as string[]).length <= 20
+    && (value.labels as string[]).every((label) => label.length <= 50)
+    && value.draftOnly === true;
+}
+
+function validDraftPrReceiptResult(value: unknown): value is Record<string, unknown> {
+  return isRecord(value)
+    && exactOptionalKeys(value, [
+      "repository", "headRef", "headSha", "draft", "publisherPrincipal",
+      "publisherPrincipalId", "publisherConfigDigest", "publisherIdentityAttestationDigest",
+    ], [
+      "pullRequestNumber", "pullRequestUrl", "outputDigest", "errorCode",
+      "indeterminateReason", "reconciliationRequired",
+    ])
+    && isRepository(value.repository)
+    && isBoundedText(value.headRef, 200, 2)
+    && GIT_SHA_RE.test(String(value.headSha || ""))
+    && value.draft === true
+    && typeof value.publisherPrincipal === "string"
+    && GITHUB_LOGIN_RE.test(value.publisherPrincipal)
+    && Number.isSafeInteger(value.publisherPrincipalId)
+    && Number(value.publisherPrincipalId) >= 1
+    && DIGEST_RE.test(String(value.publisherConfigDigest || ""))
+    && DIGEST_RE.test(String(value.publisherIdentityAttestationDigest || ""))
+    && (value.pullRequestNumber === undefined
+      || (Number.isSafeInteger(value.pullRequestNumber) && Number(value.pullRequestNumber) >= 1))
+    && (value.pullRequestUrl === undefined || (
+      isBoundedText(value.pullRequestUrl, 512)
+      && PULL_REQUEST_URL_RE.test(String(value.pullRequestUrl))
+    ))
+    && (value.outputDigest === undefined || DIGEST_RE.test(String(value.outputDigest || "")))
+    && (value.errorCode === undefined || isIdentifier(value.errorCode))
+    && (value.indeterminateReason === undefined
+      || (typeof value.indeterminateReason === "string"
+        && value.indeterminateReason.length >= 1 && value.indeterminateReason.length <= 500))
+    && (value.reconciliationRequired === undefined
+      || typeof value.reconciliationRequired === "boolean");
+}
+
+function validProposalActionShape(value: Record<string, unknown>): boolean {
+  if (value.actionId === EXCALIBUR_WHITESPACE_ACTION_ID) {
+    return isRecord(value.target) && exactKeys(value.target, ["resourceType"])
+      && value.target.resourceType === "sales_whitespace_report"
+      && validWhitespacePayload(value.payload);
+  }
+  if (value.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID) {
+    return validDraftPrTarget(value.target) && validDraftPrPayload(value.payload);
+  }
+  return isRecord(value.target) && isRecord(value.payload)
+    && isSafeJson(value.target) && isSafeJson(value.payload);
+}
+
+function validResourceFingerprints(value: unknown): value is Record<string, string | number> {
+  if (!isRecord(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length < 1 || entries.length > 64) return false;
+  return entries.every(([key, item]) => (
+    /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(key)
+      && ((typeof item === "string" && item.length >= 1 && item.length <= 256 && !item.includes("\u0000"))
+        || (Number.isSafeInteger(item) && Number(item) >= 1))
+  ));
+}
+
+function validDraftPrResourceFingerprints(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.publisherPrincipal === "string"
+    && GITHUB_LOGIN_RE.test(value.publisherPrincipal)
+    && Number.isSafeInteger(value.publisherPrincipalId)
+    && Number(value.publisherPrincipalId) >= 1
+    && typeof value.publisherConfigDigest === "string"
+    && DIGEST_RE.test(value.publisherConfigDigest)
+    && typeof value.publisherIdentityAttestationDigest === "string"
+    && DIGEST_RE.test(value.publisherIdentityAttestationDigest);
+}
+
 export function parseExcaliburProposal(value: unknown): ExcaliburProposal {
   if (!isRecord(value) || !exactKeys(value, [
     "schemaVersion", "proposalId", "commandId", "conversationId", "instanceId",
@@ -591,14 +829,13 @@ export function parseExcaliburProposal(value: unknown): ExcaliburProposal {
       || !UUID_RE.test(String(value.commandId || ""))
       || !UUID_RE.test(String(value.conversationId || ""))
       || !isIdentifier(value.instanceId)
-      || value.actionId !== "sales.whitespace.generate"
-      || !isRecord(value.target) || !exactKeys(value.target, ["resourceType"])
-      || value.target.resourceType !== "sales_whitespace_report"
-      || !validWhitespacePayload(value.payload)
+      || !isIdentifier(value.actionId)
+      || !validProposalActionShape(value)
       || !DIGEST_RE.test(String(value.payloadDigest || ""))
       || !DIGEST_RE.test(String(value.proposalDigest || ""))
-      || !isRecord(value.resourceFingerprints)
-      || Object.values(value.resourceFingerprints).some((digest) => !DIGEST_RE.test(String(digest || "")))
+      || !validResourceFingerprints(value.resourceFingerprints)
+      || (value.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+        && !validDraftPrResourceFingerprints(value.resourceFingerprints))
       || !isRecord(value.policyResult)
       || !exactKeys(value.policyResult, ["decision", "policyDigest", "reasons"])
       || !["allow", "deny"].includes(String(value.policyResult.decision || ""))
@@ -616,7 +853,7 @@ export function parseExcaliburApproval(value: unknown): ExcaliburApproval {
   if (!isRecord(value) || !exactOptionalKeys(value, [
     "schemaVersion", "approvalId", "proposalId", "proposalDigest", "principalId",
     "decision", "grantedScope", "singleUse", "expiresAt",
-  ], ["decidedAt"])
+  ], ["confirmationNonce", "decidedAt"])
       || value.schemaVersion !== EXCALIBUR_SCHEMA_VERSION
       || !UUID_RE.test(String(value.approvalId || ""))
       || !UUID_RE.test(String(value.proposalId || ""))
@@ -625,6 +862,8 @@ export function parseExcaliburApproval(value: unknown): ExcaliburApproval {
       || !["pending", "approved", "denied", "expired"].includes(String(value.decision || ""))
       || !uniqueIdentifiers(value.grantedScope)
       || value.singleUse !== true
+      || (value.confirmationNonce !== undefined
+        && (typeof value.confirmationNonce !== "string" || !CONFIRMATION_NONCE_RE.test(value.confirmationNonce)))
       || (value.decidedAt !== undefined && !isTimestamp(value.decidedAt))
       || !isTimestamp(value.expiresAt)
       || (value.decision === "pending" && value.decidedAt !== undefined)
@@ -646,23 +885,81 @@ export function parseExcaliburExecutionReceipt(value: unknown): ExcaliburExecuti
       || !UUID_RE.test(String(value.approvalId || ""))
       || !UUID_RE.test(String(value.conversationId || ""))
       || !isIdentifier(value.instanceId)
-      || value.actionId !== "sales.whitespace.generate"
+      || !isIdentifier(value.actionId)
       || !isIdentifier(value.executorId)
-      || !["accepted", "running", "succeeded", "failed", "expired", "reconciled"].includes(String(value.outcome || ""))
+      || (expectedExcaliburExecutorId(String(value.actionId)) !== null
+        && value.executorId !== expectedExcaliburExecutorId(String(value.actionId)))
+      || !["accepted", "running", "succeeded", "failed", "expired", "indeterminate", "reconciled"].includes(String(value.outcome || ""))
       || !isIdentifier(value.idempotencyKey)
       || !DIGEST_RE.test(String(value.inputDigest || ""))
       || !uniqueIdentifiers(value.evidenceRefs)
-      || !isRecord(value.result)
-      || !exactOptionalKeys(value.result, [], ["runId", "rowCount", "outputDigest", "errorCode"])
+      || !isRecord(value.result) || !isSafeJson(value.result)
       || (value.result.runId !== undefined && !isIdentifier(value.result.runId))
       || (value.result.rowCount !== undefined && (!Number.isSafeInteger(value.result.rowCount)
         || Number(value.result.rowCount) < 0 || Number(value.result.rowCount) > 5000))
       || (value.result.outputDigest !== undefined && !DIGEST_RE.test(String(value.result.outputDigest || "")))
       || (value.result.errorCode !== undefined && !isIdentifier(value.result.errorCode))
+      || (value.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+        && !validDraftPrReceiptResult(value.result))
       || !isTimestamp(value.occurredAt)) {
     throw new ExcaliburTransportError("BAD_CONTRACT", "execution receipt failed contract validation");
   }
   return value as ExcaliburExecutionReceipt;
+}
+
+function parseCreateProposalResult(value: unknown): ExcaliburCreateProposalResult {
+  if (!isRecord(value) || !exactKeys(value, ["proposal", "approval", "receipt", "replayed"])
+      || typeof value.replayed !== "boolean" || (value.receipt !== null && !isRecord(value.receipt))) {
+    throw new ExcaliburTransportError("BAD_CONTRACT", "proposal response failed contract validation");
+  }
+  const proposal = parseExcaliburProposal(value.proposal);
+  const approval = parseExcaliburApproval(value.approval);
+  const receipt = value.receipt === null ? null : parseExcaliburExecutionReceipt(value.receipt);
+  if (approval.proposalId !== proposal.proposalId || approval.proposalDigest !== proposal.proposalDigest
+      || approval.approvalId !== proposal.approvalId || approval.grantedScope.length !== 1
+      || approval.grantedScope[0] !== proposal.actionId
+      || (proposal.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID && !approval.confirmationNonce)
+      || (receipt && (receipt.proposalId !== proposal.proposalId || receipt.commandId !== proposal.commandId))) {
+    throw new ExcaliburTransportError("BAD_CONTRACT", "proposal response correlation failed");
+  }
+  return { proposal, approval, receipt, replayed: value.replayed };
+}
+
+function parseApprovalDecisionResult(value: unknown): ExcaliburApprovalDecisionResult {
+  // Compatibility with the original V1 projection while the matching sidecar
+  // rolls forward. Contract digests still prevent cross-version authority.
+  if (isRecord(value) && Object.hasOwn(value, "approval")) {
+    if (!exactOptionalKeys(value, ["approval"], [
+      "proposal", "receipt", "executionUnconfirmed", "replayed",
+    ])) {
+      throw new ExcaliburTransportError("BAD_CONTRACT", "approval decision response failed contract validation");
+    }
+    const approval = parseExcaliburApproval(value.approval);
+    const proposal = value.proposal === undefined || value.proposal === null
+      ? null : parseExcaliburProposal(value.proposal);
+    const receipt = value.receipt === undefined || value.receipt === null
+      ? null : parseExcaliburExecutionReceipt(value.receipt);
+    if (value.executionUnconfirmed !== undefined && typeof value.executionUnconfirmed !== "boolean") {
+      throw new ExcaliburTransportError("BAD_CONTRACT", "approval decision confirmation state is malformed");
+    }
+    if (value.replayed !== undefined && typeof value.replayed !== "boolean") {
+      throw new ExcaliburTransportError("BAD_CONTRACT", "approval decision replay state is malformed");
+    }
+    return {
+      approval,
+      proposal,
+      receipt,
+      executionUnconfirmed: value.executionUnconfirmed === true,
+      replayed: value.replayed === true,
+    };
+  }
+  return {
+    approval: parseExcaliburApproval(value),
+    proposal: null,
+    receipt: null,
+    executionUnconfirmed: false,
+    replayed: false,
+  };
 }
 
 function parseReceiptPage(value: unknown): ExcaliburReceiptPage {
@@ -1009,24 +1306,60 @@ export class ExcaliburHttpTransport {
     return this.mutateConversation(sessionId, "close", signal);
   }
 
-  async createProposal(_intent: unknown, _signal?: AbortSignal): Promise<never> {
+  async createProposal(
+    input: ExcaliburCreateProposalInput | unknown,
+    signal?: AbortSignal,
+  ): Promise<ExcaliburCreateProposalResult> {
     this.assertSidecar("proposal creation");
-    throw new ExcaliburEffectsLockedError("local proposal brokering");
+    if (!isRecord(input) || !exactKeys(input, ["conversationId", "intent"])
+        || !UUID_RE.test(String(input.conversationId || "")) || !isRecord(input.intent)
+        || !exactKeys(input.intent, ["actionId", "target", "payload", "idempotencyKey"])
+        || !isIdentifier(input.intent.actionId)
+        || !isRecord(input.intent.target) || !isRecord(input.intent.payload)
+        || !isSafeJson(input.intent.target) || !isSafeJson(input.intent.payload)
+        || !isIdentifier(input.intent.idempotencyKey)) {
+      throw new ExcaliburTransportError("BAD_PROPOSAL_INTENT", "proposal intent is malformed");
+    }
+    if (input.intent.actionId === EXCALIBUR_WHITESPACE_ACTION_ID
+        && (!isRecord(input.intent.target)
+          || input.intent.target.resourceType !== "sales_whitespace_report"
+          || !validWhitespacePayload(input.intent.payload))) {
+      throw new ExcaliburTransportError("BAD_PROPOSAL_INTENT", "whitespace proposal intent is malformed");
+    }
+    if (input.intent.actionId === EXCALIBUR_DRAFT_PR_ACTION_ID
+        && (!validDraftPrTarget(input.intent.target) || !validDraftPrPayload(input.intent.payload))) {
+      throw new ExcaliburTransportError("BAD_PROPOSAL_INTENT", "draft PR proposal intent is malformed");
+    }
+    const result = parseCreateProposalResult(await this.requestJson(
+      EXCALIBUR_CONTROL_PATHS.proposals,
+      { method: "POST", body: input, signal },
+    ));
+    if (result.proposal.conversationId !== input.conversationId
+        || result.proposal.actionId !== input.intent.actionId
+        || result.proposal.idempotencyKey !== input.intent.idempotencyKey
+        || canonicalSafeJson(result.proposal.target) !== canonicalSafeJson(input.intent.target)
+        || canonicalSafeJson(result.proposal.payload) !== canonicalSafeJson(input.intent.payload)) {
+      throw new ExcaliburTransportError("BAD_CONTRACT", "proposal response does not bind the exact submitted intent");
+    }
+    return result;
   }
 
   async decideApproval(
     approvalId: string,
     input: ExcaliburApprovalDecisionInput,
     signal?: AbortSignal,
-  ): Promise<ExcaliburApproval> {
+  ): Promise<ExcaliburApprovalDecisionResult> {
     this.assertSidecar("approval decisions");
     assertUuid(approvalId, "approval id");
-    if (!isRecord(input) || !exactKeys(input, ["decision", "proposalDigest"])
+    if (!isRecord(input) || !exactOptionalKeys(input, ["decision", "proposalDigest"], ["confirmationNonce"])
         || !["approved", "denied"].includes(String(input.decision || ""))
-        || !DIGEST_RE.test(String(input.proposalDigest || ""))) {
+        || !DIGEST_RE.test(String(input.proposalDigest || ""))
+        || (input.confirmationNonce !== undefined && (
+          typeof input.confirmationNonce !== "string" || !CONFIRMATION_NONCE_RE.test(input.confirmationNonce)
+        ))) {
       throw new ExcaliburTransportError("BAD_APPROVAL_DECISION", "approval decision must bind one exact proposal digest");
     }
-    return parseExcaliburApproval(await this.requestJson(
+    return parseApprovalDecisionResult(await this.requestJson(
       `${EXCALIBUR_CONTROL_PATHS.approvals}/${encodeURIComponent(approvalId)}/decide`,
       { method: "POST", body: input, signal },
     ));
@@ -1201,6 +1534,7 @@ function encodeBoundedIdentifier(value: string, label: string): string {
 }
 
 export const __testing = {
+  parseCapability,
   parseControlSession,
   parseConversationEvent,
   parseConversationSession,
@@ -1208,6 +1542,8 @@ export const __testing = {
   parseExcaliburApproval,
   parseExcaliburExecutionReceipt,
   parseExcaliburProposal,
+  parseCreateProposalResult,
+  parseApprovalDecisionResult,
   parseSseFrame,
   validateBaseUrl,
 };

@@ -14,6 +14,7 @@ test("safe traces are private, expiring, and redact credentials and content", as
   const writer = new SafeTraceWriter(path, { now: () => now, ttlMs: 60_000 });
   writer.append("out", JSON.stringify({
     authorization: "Bearer top-secret-token",
+    confirmationNonce: "A".repeat(43),
     message: "private customer prompt",
     nested: { token: "xai_1234567890", status: "ready" },
   }));
@@ -23,6 +24,7 @@ test("safe traces are private, expiring, and redact credentials and content", as
   assert.equal(raw.includes("top-secret-token"), false);
   assert.equal(raw.includes("private customer prompt"), false);
   assert.equal(raw.includes("xai_1234567890"), false);
+  assert.equal(raw.includes("A".repeat(43)), false);
   const record = JSON.parse(raw.trim()) as Record<string, unknown>;
   assert.equal(record.schema, "excalibur-safe-trace-v1");
   assert.equal(record.createdAt, "2026-07-13T12:00:00.000Z");

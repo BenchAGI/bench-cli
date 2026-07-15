@@ -12,7 +12,9 @@ This package ships **three binaries** from one install:
   with chat, proposals, approvals, and effects locked. Grok chat is sidecar-only;
   the CLI has no direct provider ACP launch path. There is no alias cutover in
   this preview.
-  **Use this as the beta preview landing surface.**
+  **Use this as the beta preview landing surface.** The legacy
+  `Excalibur CLI Preview.app` toolbar item is a Native/Aurelius shadow conductor,
+  not this surface, and must not be used for a One-Surface test drive.
 
 - **`benchagi`** (1.x compatibility surface) — streaming-aware terminal client. Connects
   to the local OpenClaw Gateway over WebSocket and renders the full event
@@ -40,6 +42,131 @@ excalibur sessions               # explicit scoped resume IDs
 excalibur providers status       # sidecar + cloud-read posture
 excalibur doctor                 # state modes, boundaries, and PATH shadows
 ```
+
+### MIGHT and operator posture
+
+Every interactive startup and `excalibur doctor` reports a content-free MIGHT
+card instead of a single ambiguous ready light:
+
+- **Mission** — exact context and sidecar-owned conversation.
+- **Intelligence** — requested/served conductor model plus attestation.
+- **Grants** — typed capabilities, live gates, and current effects posture.
+- **Hands** — support-seat roster, isolated worktree lease/head, and the
+  deterministic draft-PR publisher.
+- **Truth** — shared append-only receipt projection and endpoint sample.
+
+The card always names one of four postures. `SHADOW` is read-only; `PREPARE`
+can conduct and build but cannot execute an effect; `WIELD` has at least one
+typed, approval-bound deterministic action; `LAND` appears only if a separate
+merge/landing capability is present and usable. Both WIELD and LAND also
+require the canonical draft-publisher capability and exact executor binding;
+a missing or drifted binding stays PREPARE. Memory, calendar, schedules,
+support-seat, worktree, receipt, and publisher failures degrade only their own
+capability. Missing sidecar endpoints, mismatched contract digests, an inactive
+shared conversation, or a served-model mismatch block canonical core readiness.
+
+The first WIELD action is `github.draft_pr.publish.v1`. Its proposal binds the
+allowlisted repository, clean worktree, base/head refs and SHAs, patch,
+changed-path and packet digests, Pattern A mission ID/digest, publication-gate
+digest, metadata, and `draftOnly: true`. WIELD requires the exact
+`excalibur.sidecar.github-draft-pr.v1` action/executor binding. The approval
+card never prints its single-use confirmation nonce. Raw `git push`, `gh`,
+ready-for-review, merge, and deploy are not CLI authority paths.
+Every canonical draft receipt must also carry the GitHub login and numeric user
+ID read back by the kernel, plus the dedicated publisher-config digest and
+publisher-identity attestation digest; mission/gate fields remain proposal-only.
+
+`/orchestra` is the narrow Pattern A broker contact surface. Its configuration
+is an absolute JSON file path in `EXCALIBUR_ORCHESTRA_CONFIG`; the file has the
+exact shape below and points to a sealed `/bin/sh` wrapper. That wrapper invokes
+an absolute, versioned Node executable plus the absolute Pattern A broker. A raw
+`#!/usr/bin/env node` broker is not accepted as the configured entry because a
+restricted launch `PATH` cannot execute or attest it reliably.
+
+```json
+{
+  "schemaVersion": "excalibur.pattern-a-broker-config.v1",
+  "brokerExecutable": "/absolute/package/path/excalibur-pattern-a-wrapper",
+  "brokerSha256": "<64 lowercase hex characters for the wrapper bytes>",
+  "resourceSetDigest": "<64 lowercase hex characters>",
+  "stateRoot": "/absolute/canonical/owner-private/pattern-a-state"
+}
+```
+
+The config must be a current-operator-owned `0600`-equivalent regular file;
+the wrapper must resolve beside or below it, be operator-owned, executable,
+single-linked, and not group/world writable. `stateRoot` must already be its
+canonical realpath and an owner-private directory. Before every mission
+command, Excalibur hashes the wrapper bytes and invokes only bare `status` with
+this bounded request on stdin:
+
+```json
+{
+  "schema": "excalibur-pattern-a-publication-verifier-preflight-request-v1",
+  "stateRootRealpath": "/the/exact/configured/state-root",
+  "expectedResourceSetDigest": "<the exact configured digest>"
+}
+```
+
+The broker must return the exact resource-set/state-root attestation and its
+canonical SHA-256. The resource-set pin is
+`canonicalSha256({schema:"excalibur-pattern-a-resource-set-v1",resources:[...]})`;
+`resources` is ordered as `broker`, `contract`, `seat-adapters`, with each entry
+equal to `{name,sha256}` over raw file bytes. Wrapper drift, resource drift,
+state-root drift, malformed output, or a bad attestation blocks the command.
+Only the configured state root is passed as `EXCALIBUR_PATTERN_A_STATE_ROOT`;
+legacy ambient state-root overrides are removed.
+
+`/orchestra init <absolute-mission-json>` freezes owner-private local mission
+state and invokes no model or external effect, so it does not require an
+approval-bound session. `/orchestra status <mission-id>` is read-only.
+`/orchestra advance <mission-id> <exact-mission-digest>` is available only in
+an approval-bound Excalibur session. Both commands invoke that exact executable
+with an argument vector and `shell: false`, require a bounded
+`excalibur.pattern-a-broker-result.v1` JSON response, and render mission state
+plus receipt counts. There is no PATH discovery or provider fallback; missing
+or invalid configuration renders `Orchestra · unavailable` and invokes
+nothing.
+
+After `ANVIL_GATED`, use
+`/orchestra propose <mission-id> <absolute-owner-private-details-json>`. The CLI
+asks that same pinned broker for its exact
+`github.draft_pr.publish.v1` intent, verifies the intent and publication-action
+binding digests, and submits it unchanged to `transport.createProposal` for the
+current sidecar conversation. The response must bind the same target, payload,
+and idempotency key before the existing approval card becomes active. `[A]`
+carries the hidden single-use nonce and `[D]` denies. `/orchestra` has no Git
+executor, provider fallback, or direct publication path.
+
+### Canonical toolbar bundle (staging only)
+
+`scripts/make-excalibur-app.sh` packages `Excalibur One Surface.app`. It copies
+one exact Node runtime plus the CLI's `bin`, `dist`, `package.json`, and complete
+`node_modules` closure into the app, embeds the checked-in protocol, manifest,
+and routing digests, binds the launch command's SHA-256, declares
+`selfContainedRuntime: true` and `directProviderLaunch: false`, verifies the
+bundle with `codesign --verify --deep --strict`, and then runs
+`excalibur doctor --launch-check` before every interactive launch. It has no
+PATH, BenchAGI, Grok, Claude, or Codex fallback.
+
+Build into a staging directory without changing the installed toolbar or Dock:
+
+```bash
+npm run build
+EXCALIBUR_APP_DIR="$PWD/.staging-apps" \
+EXCALIBUR_CLI_NODE="$(command -v node)" \
+EXCALIBUR_CLI_ENTRY="$PWD/bin/excalibur.mjs" \
+EXCALIBUR_ORCHESTRA_CONFIG="/absolute/package/path/orchestra-config.json" \
+bash scripts/make-excalibur-app.sh
+```
+
+Inspect the staged bundle and run `excalibur doctor` against the matching
+sidecar before any separately approved installation. The builder deliberately
+does not remove, replace, launch, or pin the legacy preview. Omit
+`EXCALIBUR_ORCHESTRA_CONFIG` to build an honestly unbound launcher;
+`/orchestra` will report unavailable. The builder validates and path-binds the
+owner-private config, wrapper SHA-256, broker closure preflight, and canonical
+state root, but never copies the config or any secret into the app.
 
 ## The launcher (boot + agent picker)
 

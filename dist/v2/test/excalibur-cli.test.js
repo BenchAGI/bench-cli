@@ -38,3 +38,9 @@ test("Excalibur preserves private calendar and memory configure arguments", () =
         "--timezone", "America/Denver", "--consent-operator-summary",
     ]);
 });
+test("Excalibur exposes MIGHT status and keeps the launcher gate explicit", () => {
+    assert.equal(__testing.parseArgs(["might"]).command, "might");
+    const doctor = __testing.parseArgs(["doctor", "--launch-check"]);
+    assert.equal(doctor.command, "doctor");
+    assert.equal(doctor.launchCheck, true);
+});

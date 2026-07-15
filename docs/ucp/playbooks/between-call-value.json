@@ -1,0 +1,237 @@
+{
+  "schema": "ucp.playbook/1",
+  "id": "between-call-value",
+  "version": 1,
+  "title": "Customer pain to Pattern A draft pull request",
+  "implementation_status": "contract_only_until_registry_proves_effects",
+  "terminal_state": "draft_pr",
+  "execution_policy": {
+    "fail_closed": true,
+    "unknown_fields": "deny",
+    "repository_scope": "allowlisted_only",
+    "draft_only": true,
+    "force_push": "deny",
+    "ready_for_review": "deny",
+    "merge": "deny",
+    "release": "deny",
+    "deploy": "deny",
+    "external_send": "deny",
+    "receipt_required_for_mutation": true
+  },
+  "data_policy": {
+    "privacy_minimized_packet": true,
+    "receipt_include": [
+      "repository_ref",
+      "base_ref",
+      "head_ref",
+      "head_sha",
+      "file_count",
+      "test_status",
+      "draft_pr_url",
+      "draft_state",
+      "check_status",
+      "receipt_refs"
+    ],
+    "receipt_exclude": [
+      "credentials",
+      "customer_names",
+      "customer_contact_data",
+      "private_call_notes",
+      "unnecessary_deal_data"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "problem_ref",
+      "type": "privacy_minimized_local_ref",
+      "required": true
+    },
+    {
+      "name": "repository_ref",
+      "type": "allowlisted_repository_ref",
+      "required": true
+    },
+    {
+      "name": "base_ref",
+      "type": "git_ref",
+      "required": true
+    },
+    {
+      "name": "allowed_paths",
+      "type": "bounded_path_list",
+      "required": true
+    },
+    {
+      "name": "max_files",
+      "type": "positive_integer",
+      "required": true
+    },
+    {
+      "name": "proof_commands",
+      "type": "bounded_non_secret_list",
+      "required": true
+    }
+  ],
+  "roster": [
+    {
+      "seat": "Fable",
+      "job": "story_and_acceptance"
+    },
+    {
+      "seat": "Sol",
+      "job": "implementation"
+    },
+    {
+      "seat": "Opus",
+      "job": "tier_required_review_or_explicit_sit_out"
+    },
+    {
+      "seat": "Terra_Anvil",
+      "job": "land_adversary_review"
+    },
+    {
+      "seat": "Light",
+      "job": "human_land_decision"
+    }
+  ],
+  "steps": [
+    {
+      "id": "boot-health",
+      "kind": "effect",
+      "effect": "session.health_card",
+      "modes": ["observe"],
+      "dry_run": false,
+      "on_failure": "allow_local_prepare_only"
+    },
+    {
+      "id": "prepare-worktree",
+      "kind": "effect",
+      "effect": "worktree.prepare",
+      "modes": ["prepare"],
+      "target_fields": ["repository_ref", "base_ref"],
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "freeze-packet",
+      "kind": "effect",
+      "effect": "packet.freeze",
+      "modes": ["prepare"],
+      "constraints": {
+        "allowed_paths_from_input": true,
+        "max_files_from_input": true,
+        "credentials": "deny",
+        "merge": "deny",
+        "deploy": "deny",
+        "send": "deny"
+      },
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "dispatch-seats",
+      "kind": "orchestra",
+      "command": "/orchestra advance",
+      "requires_exact_mission_digest": true,
+      "requires": ["freeze-packet"],
+      "on_failure": "stop_or_record_explicit_sit_out"
+    },
+    {
+      "id": "local-proof",
+      "kind": "manual_gate",
+      "assertions": [
+        "diff_matches_allowed_paths",
+        "file_count_does_not_exceed_max",
+        "proof_commands_pass_or_residuals_are_recorded",
+        "pr_body_is_secret_and_customer_data_safe"
+      ],
+      "on_failure": "stop"
+    },
+    {
+      "id": "propose-draft",
+      "kind": "orchestra",
+      "command": "/orchestra propose",
+      "requires": ["local-proof"],
+      "requires_broker_state": "ANVIL_GATED",
+      "requires_exact_operator_approval_card": true,
+      "constraints": {
+        "must_be_draft": true,
+        "force_push": false,
+        "merge": false,
+        "deploy": false,
+        "verify_provider_draft_state": true
+      },
+      "on_failure": "stop_and_report_partial_state"
+    },
+    {
+      "id": "watch-checks",
+      "kind": "effect",
+      "effect": "github.watch_checks",
+      "modes": ["observe"],
+      "requires": ["propose-draft"],
+      "constraints": {
+        "exact_head_sha": true,
+        "green_does_not_authorize_merge": true
+      },
+      "dry_run": false,
+      "on_failure": "report_without_merge"
+    },
+    {
+      "id": "render-roster",
+      "kind": "effect",
+      "effect": "stamp.roster",
+      "modes": ["prepare"],
+      "dry_run": false,
+      "on_failure": "report_without_remote_attachment"
+    },
+    {
+      "id": "attach-roster",
+      "kind": "effect",
+      "effect": "stamp.roster",
+      "when": "remote_attachment_is_approved_and_pr_is_still_draft",
+      "modes": ["prepare"],
+      "requires": ["render-roster", "propose-draft"],
+      "dry_run": false,
+      "on_failure": "leave_local_roster_only"
+    },
+    {
+      "id": "human-land-handoff",
+      "kind": "terminal_gate",
+      "assertions": [
+        "draft_pr_url_and_sha_are_reported",
+        "reviewers_and_residuals_are_reported",
+        "merge_release_deploy_and_live_are_not_claimed"
+      ],
+      "on_failure": "stop"
+    }
+  ],
+  "exit_criteria": [
+    "packet_is_bounded_and_private_data_safe",
+    "local_proof_and_residuals_are_recorded",
+    "matching_publish_dry_run_exists",
+    "remote_branch_matches_expected_sha",
+    "provider_confirms_draft_true",
+    "checks_are_reported_for_exact_sha",
+    "roster_is_honest",
+    "human_land_owner_is_explicit",
+    "merge_deploy_and_live_are_not_performed_or_implied"
+  ],
+  "stop_conditions": [
+    "TARGET_NOT_ALLOWLISTED",
+    "INPUT_SCHEMA_INVALID",
+    "DRY_RUN_REQUIRED",
+    "DRAFT_STATE_REQUIRED",
+    "POSTCONDITION_FAILED",
+    "RECEIPT_WRITE_FAILED",
+    "diff_exceeds_packet_scope",
+    "secret_or_customer_private_data_in_pr_body",
+    "existing_pr_is_ready_or_merged"
+  ],
+  "forbidden_effects": [
+    "git.merge",
+    "github.mark_ready",
+    "release.publish",
+    "deploy.run",
+    "mail.send"
+  ]
+}
