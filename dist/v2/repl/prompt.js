@@ -51,7 +51,7 @@ export class Repl {
             // events fire per-keystroke. V1.1 — Item 3.
             const stdin = process.stdin;
             stdin.on("keypress", (str, key) => {
-                if (!this.busy || !key?.sequence)
+                if (!key?.sequence)
                     return;
                 // Sync predicate: would onKey consume this key? If yes, we
                 // clear the line buffer SYNCHRONOUSLY (deferred to nextTick
@@ -60,6 +60,9 @@ export class Repl {
                 // closes the race where a fast `a` + Enter could emit a stray
                 // chat message before the async resolve completed (Codex
                 // Anvil P1).
+                // The runtime predicate is the authority. An Excalibur approval card
+                // remains actionable after assistant.final, when the REPL is no longer
+                // busy, while ordinary idle letters still pass through as message text.
                 if (this.cb.canConsumeKey?.(key.sequence) && this.cb.onKey) {
                     void this.cb.onKey(key.sequence);
                     process.nextTick(() => {

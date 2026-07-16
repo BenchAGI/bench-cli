@@ -2,7 +2,6 @@
 // approval state into a single durable run loop. Used by the REPL and by
 // single-turn commands.
 
-import { appendFile } from "node:fs/promises";
 import { LocalGatewayWsTransport } from "./transport/local-gateway.js";
 import { resolveGatewayToken, resolveGatewayPassword } from "./auth/gateway-token.js";
 import { loadFreshFirebaseIdToken } from "./auth/firebase-token.js";
@@ -14,6 +13,7 @@ import { classifyByModel, resolveLivenessThreshold, type Liveness } from "./prob
 import type { AgentEventPayload, EventFrame } from "./protocol/types.js";
 import { PROTOCOL_VERSION } from "./protocol/types.js";
 import { c, eprintln, println } from "./render/ansi.js";
+import { SafeTraceWriter } from "./diagnostics/safe-trace.js";
 
 export type RunnerOptions = {
   agentId: string;
@@ -31,6 +31,8 @@ export type RunnerOptions = {
   tui?: boolean;
   // Label before assistant output (e.g. "Aurelius"). Defaults to "agent".
   assistantLabel?: string;
+  /** Excalibur cloud fallback: every provider approval is denied and model mutation is locked. */
+  effectsLocked?: boolean;
 };
 
 export class ChatRunner {
@@ -64,10 +66,16 @@ export class ChatRunner {
   // order. This prevents the live-vs-history ordering race that would
   // otherwise produce false seq-gap warnings (Codex Anvil P1).
   private liveFrameBuffer: EventFrame[] = [];
-  private traceFramesPath: string | null = null;
+  private traceWriter: SafeTraceWriter | null = null;
 
   constructor(private opts: RunnerOptions) {
-    this.traceFramesPath = opts.traceFramesPath ?? process.env.BENCHAGI_TRACE_FRAMES ?? null;
+    const tracePath = opts.traceFramesPath
+      ?? process.env.EXCALIBUR_TRACE_FRAMES
+      ?? process.env.BENCHAGI_TRACE_FRAMES
+      ?? null;
+    this.traceWriter = tracePath ? new SafeTraceWriter(tracePath, {
+      ttlMs: Number(process.env.EXCALIBUR_TRACE_TTL_MS) || undefined,
+    }) : null;
     this.transport = new LocalGatewayWsTransport({
       url: opts.gatewayUrl,
       rawFrameLog: (direction, raw) => this.traceRawFrame(direction, raw),
@@ -179,7 +187,11 @@ export class ChatRunner {
             }
           }
           if (ap.stream === "approval") {
-            this.approval.onAgentApproval((ap.data as never) ?? null);
+            if (this.opts.effectsLocked) {
+              void this.denyLockedApproval(ap.data);
+            } else {
+              this.approval.onAgentApproval((ap.data as never) ?? null);
+            }
             return;
           }
           this.renderer.renderAgent(ap);
@@ -354,13 +366,7 @@ export class ChatRunner {
   }
 
   private traceRawFrame(direction: "in" | "out", raw: string): void {
-    if (!this.traceFramesPath) return;
-    const line = JSON.stringify({
-      ts: new Date().toISOString(),
-      direction,
-      raw,
-    });
-    void appendFile(this.traceFramesPath, `${line}\n`).catch(() => {});
+    this.traceWriter?.append(direction, raw);
   }
 
   async waitForFinal(
@@ -491,7 +497,7 @@ export class ChatRunner {
    */
   canHandleApprovalKey(key: string): boolean {
     if (this.approval?.canConsumeKey(key)) return true;
-    if (key === "r" || key === "R") return true;
+    if (key === "r" || key === "R") return Boolean(this.currentRunId);
     return false;
   }
 
@@ -539,6 +545,7 @@ export class ChatRunner {
   async close(): Promise<void> {
     if (this.liveness) this.liveness.stop();
     await this.transport.close();
+    await this.traceWriter?.flush();
   }
 
   async setLivenessOverride(): Promise<void> {
@@ -595,6 +602,7 @@ export class ChatRunner {
    * the agent's allowed models and rejects an unknown one. Returns true on success.
    */
   async setModel(model: string): Promise<boolean> {
+    if (this.opts.effectsLocked) return false;
     this.modelOverride = model; // applied at session-create (works without elevated scope)
     if (!this.sessionKey) return true; // no session yet → takes effect on your first message
     return this.patchSession({ model }); // existing session → sessions.patch (operator.admin gated)
@@ -606,6 +614,7 @@ export class ChatRunner {
    * this is effectively a Flyway·deep feature. Valid: off·minimal·low·medium·high·xhigh·max.
    */
   async setThinkingLevel(level: string): Promise<boolean> {
+    if (this.opts.effectsLocked) return false;
     if (!this.sessionKey) return false; // sessions.create can't carry thinkingLevel
     return this.patchSession({ thinkingLevel: level });
   }
@@ -693,6 +702,22 @@ export class ChatRunner {
       });
     } catch (err) {
       eprintln(c.red(`approval ${action.decision} failed: ${err instanceof Error ? err.message : String(err)}`));
+    }
+  }
+
+  private async denyLockedApproval(value: unknown): Promise<void> {
+    const data = value as {
+      phase?: string;
+      kind?: "exec" | "plugin" | "unknown";
+      approvalId?: string;
+    } | null;
+    if (!data || data.phase !== "requested" || !data.approvalId) return;
+    const method = data.kind === "plugin" ? "plugin.approval.resolve" : "exec.approval.resolve";
+    try {
+      await this.transport.request(method, { id: data.approvalId, decision: "deny" });
+      println(c.dim("  → Excalibur read-only fallback denied an effect request"));
+    } catch (error) {
+      eprintln(c.red(`failed to deny locked approval: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
 

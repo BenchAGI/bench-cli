@@ -73,7 +73,13 @@ global_bin_for_pm() {
   esac
 }
 
-PACKAGE=${BENCHAGI_PACKAGE:-https://github.com/BenchAGI/bench-cli/archive/refs/heads/main.tar.gz}
+PACKAGE=${BENCHAGI_PACKAGE:-@benchagi/cli@1.0.0-beta.15}
+
+case "$PACKAGE" in
+  *'/refs/heads/'*|*'github:'*'#'*|*'git+'*)
+    die 'Refusing an unsealed branch or git install. Set BENCHAGI_PACKAGE to a digest-pinned artifact or an exact published version.'
+    ;;
+esac
 
 step 'Detecting operating system'
 OS_NAME=$(uname -s 2>/dev/null || printf '%s' unknown)
@@ -156,6 +162,16 @@ else
   warn "Could not resolve the $PM global bin; using the existing PATH"
 fi
 
+step 'Verifying Excalibur Grok-first preview'
+if ! command -v excalibur >/dev/null 2>&1; then
+  if [ -n "${GLOBAL_BIN:-}" ]; then
+    die "excalibur is not on PATH. Add the $PM global bin to PATH: export PATH=\"$GLOBAL_BIN:\$PATH\""
+  fi
+  die 'excalibur is not on PATH. Add your package manager global bin directory to PATH.'
+fi
+excalibur version >/dev/null
+ok "excalibur (canonical command, beta.15 internal preview) is available at $(command -v excalibur)"
+
 step 'Verifying benchagi streaming console'
 if ! command -v benchagi >/dev/null 2>&1; then
   if [ -n "${GLOBAL_BIN:-}" ]; then
@@ -164,32 +180,18 @@ if ! command -v benchagi >/dev/null 2>&1; then
   die 'benchagi is not on PATH. Add your package manager global bin directory to PATH.'
 fi
 benchagi version >/dev/null
-ok "benchagi (canonical) is available at $(command -v benchagi)"
+ok "benchagi (1.x compatibility command; not redirected in beta.15) is available at $(command -v benchagi)"
 
-step 'Verifying bench alias binary'
+step 'Verifying bench compatibility binary'
 if ! command -v bench >/dev/null 2>&1; then
   if [ -n "${GLOBAL_BIN:-}" ]; then
     die "bench is not on PATH. Add the $PM global bin to PATH: export PATH=\"$GLOBAL_BIN:\$PATH\""
   fi
   die 'bench is not on PATH. Add your package manager global bin directory to PATH.'
 fi
-ok "bench (deprecated alias) is available at $(command -v bench)"
+ok "bench (1.x compatibility command with legacy families intact) is available at $(command -v bench)"
 
-if [ "$OS" = 'macos' ]; then
-  step 'Installing the BenchAGI Dock app (the glyph)'
-  if benchagi install-app; then
-    ok 'BenchAGI.app installed in ~/Applications and pinned to the Dock'
-  else
-    warn 'Could not create the Dock app — the `benchagi` command still works.'
-  fi
-fi
-
-step 'Running BenchAGI setup'
-# benchagi doctor is the canonical readiness check; bench setup is the legacy
-# alias check, kept for back-compat.
-if bench setup --help >/dev/null 2>&1; then
-  bench setup --non-interactive
-else
-  benchagi --help
-fi
-ok 'BenchAGI CLI install completed'
+step 'Confirming CLI-only installation boundary'
+warn 'No desktop application was installed, replaced, renamed, launched, or pinned to the Dock.'
+warn 'Keep /Applications/Excalibur.app build 7 unchanged until a separate explicit desktop installation approval.'
+ok 'Excalibur beta.15 CLI candidate installed; run `excalibur doctor` while the approved sidecar is available'

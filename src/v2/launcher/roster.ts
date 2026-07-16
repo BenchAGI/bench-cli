@@ -22,8 +22,8 @@ function shortModel(m?: string): string {
 const cap = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
 export async function resolveRoster(opts: { gatewayUrl?: string } = {}): Promise<LauncherAgent[]> {
-  const entitled = await resolveEntitledAgents().catch(() => null);
-  if (entitled && entitled.length) {
+  const entitled = await resolveEntitledAgents();
+  if (entitled !== null) {
     return entitled.map((a) => ({
       agentId: a.agentId,
       name: cap(a.name),

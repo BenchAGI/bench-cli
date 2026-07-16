@@ -11,8 +11,13 @@ import { commandVersion, CLI_VERSION } from "./commands/version.js";
 import { getProjectAgent, loadState } from "./state/state-file.js";
 import { runCloudSeat } from "./launcher/cloud-seat.js";
 import { runLaunch } from "./launcher/launch.js";
-export async function run(argv) {
+import { runExcalibur } from "./excalibur/cli.js";
+export async function run(argv, opts = {}) {
     ensureCursorRestoredOnExit();
+    if (opts.invocationName === "excalibur") {
+        await runExcalibur(argv);
+        return;
+    }
     const parsed = parseArgs(argv);
     if (parsed.command === "version" || argv.includes("--version") || argv.includes("-v")) {
         await commandVersion();
@@ -276,7 +281,7 @@ Flags:
   --attach <path>          (doctor --report) include a runbook file in the report
   --gateway <ws-url>       default tunnel/harness gateway for chat/Enter mode
   --direct-gateway <ws-url> gateway used by launcher Direct mode
-  --trace-frames <path>    append raw gateway WS frames as JSONL
+  --trace-frames <path>    private, redacted, expiring diagnostic JSONL
   --help, --version
 `);
 }

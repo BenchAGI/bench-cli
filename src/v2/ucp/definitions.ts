@@ -1,0 +1,30 @@
+import type { EffectDefinition } from "./types.js";
+
+const definitions: EffectDefinition[] = [
+  { id: "worktree.prepare", description: "Prepare an isolated local git worktree.", effectClass: "local-prepare", requiredModes: ["prepare"], supportsDryRun: true, defaultDryRun: true, secretUse: "none", availability: "shipped" },
+  { id: "packet.freeze", description: "Validate and freeze a bounded seat packet.", effectClass: "local-prepare", requiredModes: ["prepare"], supportsDryRun: true, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+  { id: "seat.dispatch", description: "Validate a legacy effects-none packet; model dispatch belongs only to /orchestra advance.", effectClass: "orchestra", requiredModes: ["prepare"], supportsDryRun: true, defaultDryRun: true, secretUse: "none", availability: "ceremony_stub", denialCode: "CANONICAL_ORCHESTRA_BROKER_REQUIRED" },
+  { id: "github.watch_checks", description: "Read check state for one pull request.", effectClass: "publish-draft", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "stamp.roster", description: "Write a local Pattern A roster stamp.", effectClass: "local-prepare", requiredModes: ["prepare"], supportsDryRun: true, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+  { id: "bench.health", description: "Read the authenticated Bench agent health endpoint.", effectClass: "bench-read", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "bench.deals.search", description: "Search tenant-scoped deals through the authoritative agent API.", effectClass: "bench-read", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "bench.deals.get", description: "Read one tenant-scoped deal through the authoritative agent API.", effectClass: "bench-read", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "bench.deals.list", description: "List tenant-scoped deals through the authoritative agent API.", effectClass: "bench-read", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "bench.cs.instance_summary", description: "Read a least-data customer-success instance summary.", effectClass: "bench-read", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "bench.cs.grant", description: "Grant customer-success access through the existing tenant broker.", effectClass: "tenant-mutation", requiredModes: ["secret-use", "mutate-tenant"], supportsDryRun: true, defaultDryRun: true, secretUse: "required", availability: "ceremony_stub", denialCode: "BENCH_CS_GRANT_BROKER_REQUIRED" },
+  { id: "mesh.control_health", description: "Observe public Flyway control and DERP reachability.", effectClass: "mesh-read", requiredModes: ["observe"], supportsDryRun: false, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+  { id: "mesh.node_status", description: "Read the local Tailscale node posture.", effectClass: "mesh-read", requiredModes: ["observe"], supportsDryRun: false, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+  { id: "mesh.preauth.mint", description: "Validate a tenant-bound single-use preauth request; broker execution is not shipped.", effectClass: "mesh-mutation", requiredModes: ["secret-use", "mutate-tenant"], supportsDryRun: true, defaultDryRun: true, secretUse: "required", availability: "ceremony_stub", denialCode: "MESH_PREAUTH_BROKER_REQUIRED" },
+  { id: "mesh.verify_customer_join", description: "Verify one customer node and tenant tag against live Headscale.", effectClass: "mesh-read", requiredModes: ["secret-use"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "shipped" },
+  { id: "mail.doctor", description: "Inspect outbound drafting readiness without reading or sending mail.", effectClass: "session", requiredModes: ["observe"], supportsDryRun: false, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+  { id: "mail.draft", description: "Write an owner-private local mail draft; never send.", effectClass: "outbound-draft", requiredModes: ["outbound-draft"], supportsDryRun: true, defaultDryRun: true, secretUse: "none", availability: "shipped" },
+  { id: "mail.send", description: "External mail send remains deliberately unavailable.", effectClass: "outbound-send", requiredModes: ["outbound-draft"], supportsDryRun: false, defaultDryRun: false, secretUse: "required", availability: "hard_denied", denialCode: "MAIL_SEND_SECOND_GRANT_PATH_NOT_SHIPPED" },
+  { id: "session.health_card", description: "Collect the observe-only UCP session health card.", effectClass: "session", requiredModes: ["observe"], supportsDryRun: false, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+  { id: "receipt.write", description: "Write a value-free local operator marker receipt.", effectClass: "local-prepare", requiredModes: ["prepare"], supportsDryRun: false, defaultDryRun: false, secretUse: "none", availability: "shipped" },
+];
+
+export const EFFECT_DEFINITIONS = Object.freeze(definitions.map((item) => Object.freeze({ ...item })));
+
+export function effectDefinition(effectId: string): EffectDefinition | null {
+  return EFFECT_DEFINITIONS.find((item) => item.id === effectId) || null;
+}

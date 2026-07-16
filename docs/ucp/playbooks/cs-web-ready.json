@@ -1,0 +1,159 @@
+{
+  "schema": "ucp.playbook/1",
+  "id": "cs-web-ready",
+  "version": 1,
+  "title": "Web customer-success readiness",
+  "implementation_status": "contract_only_until_registry_proves_effects",
+  "terminal_state": "ready",
+  "execution_policy": {
+    "fail_closed": true,
+    "unknown_fields": "deny",
+    "tenant_scope": "exactly_one",
+    "receipt_required_for_mutation": true,
+    "mesh_required": false
+  },
+  "data_policy": {
+    "runtime_refs_only": true,
+    "receipt_include": [
+      "opaque_tenant_ref",
+      "opaque_principal_ref",
+      "role_or_flag_labels",
+      "boolean_before_after",
+      "health_status",
+      "receipt_refs"
+    ],
+    "receipt_exclude": [
+      "names",
+      "emails",
+      "contact_data",
+      "deal_content",
+      "notes",
+      "financial_values",
+      "credentials"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "tenant_ref",
+      "type": "opaque_ref",
+      "required": true
+    },
+    {
+      "name": "principal_ref",
+      "type": "opaque_ref",
+      "required": true
+    },
+    {
+      "name": "intended_role",
+      "type": "least_privilege_role",
+      "required": true
+    },
+    {
+      "name": "verification_record_ref",
+      "type": "opaque_ref",
+      "required": true
+    }
+  ],
+  "required_health": [
+    {
+      "check": "bench",
+      "accepted": ["live"],
+      "on_failure": "stop_without_cache_or_markdown_fallback"
+    },
+    {
+      "check": "gatekeeper",
+      "accepted": ["ready", "locked"],
+      "on_failure": "stop"
+    }
+  ],
+  "steps": [
+    {
+      "id": "boot-health",
+      "kind": "effect",
+      "effect": "session.health_card",
+      "modes": ["observe"],
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "bench-health",
+      "kind": "effect",
+      "effect": "bench.health",
+      "modes": ["observe"],
+      "dry_run": false,
+      "on_failure": "stop_and_name_missing_reference"
+    },
+    {
+      "id": "instance-summary-before",
+      "kind": "effect",
+      "effect": "bench.cs.instance_summary",
+      "modes": ["secret-use"],
+      "requires_user_presence": true,
+      "target_fields": ["tenant_ref"],
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "grant-plan",
+      "kind": "effect",
+      "effect": "bench.cs.grant",
+      "when": "approved_access_delta_is_required",
+      "modes": ["secret-use", "mutate-tenant"],
+      "requires_user_presence": true,
+      "target_fields": ["tenant_ref", "principal_ref", "intended_role"],
+      "dry_run": true,
+      "on_failure": "stop"
+    },
+    {
+      "id": "grant-live",
+      "kind": "effect",
+      "effect": "bench.cs.grant",
+      "when": "grant_plan_is_approved",
+      "modes": ["secret-use", "mutate-tenant"],
+      "requires_user_presence": true,
+      "requires_matching_dry_run": "grant-plan",
+      "target_fields": ["tenant_ref", "principal_ref", "intended_role"],
+      "dry_run": false,
+      "on_failure": "stop_and_report_partial_state"
+    },
+    {
+      "id": "instance-summary-after",
+      "kind": "effect",
+      "effect": "bench.cs.instance_summary",
+      "modes": ["secret-use"],
+      "requires_user_presence": true,
+      "target_fields": ["tenant_ref"],
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "customer-web-verification",
+      "kind": "manual_gate",
+      "assertions": [
+        "principal_can_authenticate",
+        "intended_instance_is_visible",
+        "unrelated_instances_are_not_exposed",
+        "cs_workbench_is_available",
+        "one_live_scoped_record_loads"
+      ],
+      "on_failure": "stop"
+    }
+  ],
+  "exit_criteria": [
+    "bench_source_is_live",
+    "intended_principal_authenticates",
+    "instance_switcher_scope_is_correct",
+    "least_privilege_cs_access_is_verified",
+    "one_real_scoped_record_loads",
+    "mutations_have_before_after_receipts",
+    "mesh_is_not_required_or_is_separately_deferred"
+  ],
+  "stop_conditions": [
+    "TENANT_SCOPE_REQUIRED",
+    "LIVE_DEPENDENCY_UNHEALTHY",
+    "SECRET_STORE_DIVERGENCE",
+    "TARGET_NOT_ALLOWLISTED",
+    "RECEIPT_WRITE_FAILED",
+    "mesh_join_is_presented_as_web_membership"
+  ]
+}

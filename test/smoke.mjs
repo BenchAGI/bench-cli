@@ -171,12 +171,27 @@ await test("install.sh is POSIX shebang and executable", () => {
   assert.match(text, /set -eu/);
 });
 
-await test("install.sh verifies both bench binaries", () => {
+await test("install.sh verifies Excalibur and both bench binaries", () => {
   const text = readFileSync(path.resolve(__dirname, "../scripts/install.sh"), "utf8");
-  assert.match(text, /PACKAGE=\$\{BENCHAGI_PACKAGE:-https:\/\/github\.com\/BenchAGI\/bench-cli\/archive\/refs\/heads\/main\.tar\.gz\}/);
-  assert.match(text, /Verifying bench alias binary/);
+  assert.match(text, /PACKAGE=\$\{BENCHAGI_PACKAGE:-@benchagi\/cli@1\.0\.0-beta\.15\}/);
+  assert.match(text, /Refusing an unsealed branch or git install/);
+  assert.match(text, /Verifying bench compatibility binary/);
   assert.match(text, /Verifying benchagi streaming console/);
   assert.match(text, /command -v benchagi/);
+  assert.match(text, /Verifying Excalibur Grok-first preview/);
+  assert.match(text, /command -v excalibur/);
+  assert.match(text, /canonical command, beta\.15 internal preview/);
+  assert.match(text, /not redirected in beta\.15/);
+  assert.match(text, /No desktop application was installed, replaced, renamed, launched, or pinned/);
+  assert.doesNotMatch(text, /benchagi install-app/);
+  assert.doesNotMatch(text, /bench setup --non-interactive/);
+});
+
+await test("all packaged command entries are owner-executable", () => {
+  for (const name of ["bench", "benchagi", "excalibur"]) {
+    const entry = path.resolve(__dirname, `../bin/${name}.mjs`);
+    assert.ok((statSync(entry).mode & 0o100) !== 0, `${name} entry must be executable`);
+  }
 });
 
 await test("install.sh refreshes PATH with the installed package manager bin", () => {

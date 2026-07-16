@@ -1,0 +1,215 @@
+{
+  "schema": "ucp.playbook/1",
+  "id": "mesh-then-seat",
+  "version": 1,
+  "title": "Optional customer mesh followed by seat handoff",
+  "implementation_status": "contract_only_until_registry_proves_effects",
+  "terminal_state": "verified_join_with_explicit_proof_level",
+  "execution_policy": {
+    "fail_closed": true,
+    "unknown_fields": "deny",
+    "tenant_scope": "exactly_one",
+    "web_first": true,
+    "unsupervised_customer_rollout": "deny_until_second_tenant_denial_is_proven",
+    "receipt_required_for_mutation": true
+  },
+  "data_policy": {
+    "secret_delivery": "direct_to_enrollment_process_only",
+    "receipt_include": [
+      "opaque_tenant_ref",
+      "opaque_node_ref",
+      "device_class",
+      "ttl_seconds",
+      "single_use",
+      "reusable",
+      "proof_level",
+      "health_status",
+      "receipt_refs"
+    ],
+    "receipt_exclude": [
+      "preauth_key",
+      "api_key",
+      "credential_fragments",
+      "customer_identity_data",
+      "node_private_key"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "cs_web_ready_receipt_ref",
+      "type": "receipt_ref",
+      "required": true
+    },
+    {
+      "name": "tenant_ref",
+      "type": "opaque_ref",
+      "required": true
+    },
+    {
+      "name": "headscale_user_ref",
+      "type": "tenant_resolved_numeric_ref",
+      "required": true
+    },
+    {
+      "name": "device_class",
+      "type": "enum",
+      "values": ["fleet", "operator", "customer"],
+      "required": true
+    },
+    {
+      "name": "expected_node_ref",
+      "type": "opaque_ref",
+      "required": true
+    },
+    {
+      "name": "business_reason",
+      "type": "non_secret_text",
+      "required": true
+    }
+  ],
+  "required_health": [
+    {
+      "check": "cs_web_ready_receipt",
+      "accepted": ["ready"],
+      "on_failure": "stop"
+    },
+    {
+      "check": "mesh_control",
+      "accepted": ["live"],
+      "on_failure": "stop"
+    },
+    {
+      "check": "topology_drift",
+      "accepted": ["none"],
+      "on_failure": "stop_without_repair"
+    },
+    {
+      "check": "gatekeeper",
+      "accepted": ["ready"],
+      "on_failure": "stop"
+    }
+  ],
+  "steps": [
+    {
+      "id": "boot-health",
+      "kind": "effect",
+      "effect": "session.health_card",
+      "modes": ["observe"],
+      "dry_run": false,
+      "on_failure": "stop"
+    },
+    {
+      "id": "control-health",
+      "kind": "effect",
+      "effect": "mesh.control_health",
+      "modes": ["observe"],
+      "dry_run": false,
+      "assertions": [
+        "control_endpoint_observed",
+        "tls_valid",
+        "derp_observed",
+        "reverse_tunnel_observed",
+        "aerie_health_observed"
+      ],
+      "on_failure": "stop"
+    },
+    {
+      "id": "device-classification",
+      "kind": "manual_gate",
+      "assertions": [
+        "device_class_is_explicit",
+        "internal_cs_mac_is_not_customer_bridge",
+        "mesh_is_needed"
+      ],
+      "on_failure": "stop"
+    },
+    {
+      "id": "mint-plan",
+      "kind": "effect",
+      "effect": "mesh.preauth.mint",
+      "modes": ["secret-use", "mutate-tenant"],
+      "requires_user_presence": true,
+      "target_fields": ["tenant_ref", "headscale_user_ref"],
+      "constraints": {
+        "single_use": true,
+        "reusable": false,
+        "max_ttl_seconds": 900
+      },
+      "dry_run": true,
+      "on_failure": "stop"
+    },
+    {
+      "id": "mint-and-enroll",
+      "kind": "effect",
+      "effect": "mesh.preauth.mint",
+      "modes": ["secret-use", "mutate-tenant"],
+      "requires_user_presence": true,
+      "requires_matching_dry_run": "mint-plan",
+      "target_fields": ["tenant_ref", "headscale_user_ref"],
+      "constraints": {
+        "single_use": true,
+        "reusable": false,
+        "max_ttl_seconds": 900,
+        "return_secret_as_text": false,
+        "delivery": "direct_to_enrollment_process"
+      },
+      "dry_run": false,
+      "on_failure": "stop_and_report_partial_state"
+    },
+    {
+      "id": "verify-join",
+      "kind": "effect",
+      "effect": "mesh.verify_customer_join",
+      "modes": ["secret-use"],
+      "requires_user_presence": true,
+      "target_fields": ["tenant_ref", "expected_node_ref"],
+      "dry_run": false,
+      "assertions": [
+        "node_is_under_expected_tenant_and_user",
+        "intended_aerie_is_reachable",
+        "proof_level_is_explicit"
+      ],
+      "on_failure": "stop"
+    },
+    {
+      "id": "web-membership-recheck",
+      "kind": "manual_gate",
+      "assertions": [
+        "web_membership_remains_correct",
+        "mesh_join_was_not_treated_as_web_grant"
+      ],
+      "on_failure": "stop"
+    },
+    {
+      "id": "customer-seat-handoff",
+      "kind": "manual_gate",
+      "note": "Customer account or CLI provisioning is not seat.dispatch; use the separately approved customer handoff path.",
+      "assertions": [
+        "web_ready",
+        "mesh_join_verified",
+        "least_privilege_customer_handoff_selected"
+      ],
+      "on_failure": "stop"
+    }
+  ],
+  "exit_criteria": [
+    "web_cs_ready_was_proven_first",
+    "device_class_and_tenant_are_explicit",
+    "preauth_key_was_single_use_non_reusable_and_at_most_15_minutes",
+    "secret_value_was_never_rendered_or_receipted",
+    "node_is_in_expected_tenant_and_user",
+    "intended_aerie_is_reachable",
+    "isolation_proof_level_is_recorded",
+    "internal_cs_bridge_was_not_customer_paired"
+  ],
+  "stop_conditions": [
+    "TENANT_SCOPE_REQUIRED",
+    "TENANT_SCOPE_UNPROVEN",
+    "TOPOLOGY_DRIFT",
+    "SECRET_STORE_DIVERGENCE",
+    "USER_PRESENCE_REQUIRED",
+    "safe_secret_delivery_unavailable",
+    "general_rollout_requested_without_second_tenant_denial",
+    "RECEIPT_WRITE_FAILED"
+  ]
+}
